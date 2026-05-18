@@ -1,0 +1,16 @@
+BLOCK_REGISTRY: dict[str, dict] = {
+    "navigation": {"singleton": True, "variants": ["N1-Overlay-Nav", "N2-Minimal-Nav"]},
+    "hero": {"singleton": True, "variants": ["H1-Centered", "H2-Split", "H3-Invitation-Cover"]},
+    "story": {"singleton": False, "variants": ["S1-Timeline", "S2-Centered-Text"]},
+    "details": {"singleton": False, "variants": ["D1-Cards", "D2-Minimal"]},
+    "gallery": {"singleton": False, "variants": ["G1-Grid", "G2-Carousel"]},
+    "countdown": {"singleton": True, "variants": ["C1-Classic", "C2-Minimal"]},
+    "map": {"singleton": False, "variants": ["M1-Google-Link", "M2-Card"]},
+    "rsvp": {"singleton": True, "variants": ["R1-Form", "R2-Compact"]},
+    "timeline": {"singleton": False, "variants": ["T1-Vertical", "T2-Horizontal"]},
+    "faq": {"singleton": False, "variants": ["F1-Accordion"]},
+    "footer": {"singleton": True, "variants": ["FO1-Minimal", "FO2-Brand"]},
+    "projects": {"singleton": False, "variants": ["P1-Grid", "P2-Showcase"]},
+    "services": {"singleton": False, "variants": ["SV1-Cards", "SV2-List"]},
+    "proof": {"singleton": False, "variants": ["PR1-Logos", "PR2-Testimonials"]},
+}
