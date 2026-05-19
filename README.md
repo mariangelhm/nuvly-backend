@@ -1,4 +1,4 @@
-# Nuvly Backend MVP — Python 3.14
+# Nuvly Backend MVP — Python 3.12
 
 Backend MVP para el Studio de Nuvly.
 
@@ -22,13 +22,13 @@ La idea central es que el frontend **NO renderiza desde HTML guardado**. El fron
 Esta versión fue adaptada para trabajar con:
 
 ```txt
-Python 3.14.x
+Python 3.12.x
 FastAPI moderno
 Pydantic v2.12+
 MongoDB Atlas
 ```
 
-El error anterior venía de `pydantic-core`. Si se instala una versión vieja de Pydantic en Python 3.14, pip puede intentar compilar dependencias nativas y fallar.
+En Render necesitamos forzar Python 3.12 porque el servicio estaba tomando Python 3.14 por defecto y MongoDB Atlas fallaba con SSL handshake.
 
 Por eso el proyecto usa versiones modernas:
 
@@ -46,7 +46,7 @@ Antes de instalar dependencias, actualiza `pip`, `setuptools` y `wheel`.
 
 ## Stack
 
-- Python 3.14.x
+- Python 3.12.x
 - FastAPI
 - MongoDB Atlas Free
 - PyMongo
@@ -115,7 +115,7 @@ python --version
 Debe salir algo como:
 
 ```txt
-Python 3.14.5
+Python 3.12.x
 ```
 
 ---
@@ -150,7 +150,7 @@ Luego activa de nuevo:
 
 # 3. Actualizar herramientas de instalación
 
-Esto es importante para Python 3.14:
+Esto es importante para Python 3.12:
 
 ```powershell
 python -m pip install --upgrade pip setuptools wheel
@@ -170,6 +170,22 @@ Si aparece error con `pydantic-core`, ejecuta:
 python -m pip install --upgrade pip setuptools wheel
 pip install --upgrade "pydantic>=2.12.0" "fastapi>=0.119.0"
 pip install -r requirements.txt
+```
+
+---
+
+# 4.1. Deploy en Render
+
+Render debe detectar `.python-version` en la raiz del repo con este contenido:
+
+```txt
+3.12
+```
+
+Start Command esperado:
+
+```txt
+python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 ---
