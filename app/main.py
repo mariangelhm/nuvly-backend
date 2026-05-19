@@ -20,9 +20,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Nuvly Backend")
-    ping_database()
-    create_indexes()
-    logger.info("MongoDB connected and indexes ensured")
+    try:
+        ping_database()
+        create_indexes()
+        logger.info("MongoDB connected and indexes created")
+    except Exception:
+        logger.exception("MongoDB startup failed")
+        raise
     yield
     close_database()
     logger.info("Nuvly Backend stopped")

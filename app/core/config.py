@@ -2,6 +2,7 @@ from functools import lru_cache
 from typing import List
 
 from pydantic import Field
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,4 +31,16 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        missing_or_invalid = []
+        for error in exc.errors():
+            field_name = ".".join(str(part) for part in error.get("loc", ()))
+            if field_name:
+                missing_or_invalid.append(field_name)
+        details = ", ".join(missing_or_invalid) if missing_or_invalid else str(exc)
+        raise RuntimeError(
+            "Invalid environment configuration. Check MONGODB_URI, MONGODB_DB_NAME, API_PREFIX and CORS_ORIGINS. "
+            f"Details: {details}"
+        ) from exc
