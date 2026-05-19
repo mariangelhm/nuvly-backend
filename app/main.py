@@ -6,6 +6,10 @@ from app.core.config import get_settings
 from app.core.database import close_database, create_indexes, ping_database
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.modules.domain.customer_routes import router as customer_router
+from app.modules.domain.public_routes import router as public_router
+from app.modules.domain.published_routes import router as domain_published_router
+from app.modules.domain.studio_routes import router as studio_router
 from app.modules.experiences.routes import router as experiences_router
 from app.modules.health.routes import router as health_router
 from app.modules.published.routes import router as published_router
@@ -44,6 +48,10 @@ register_exception_handlers(app)
 app.include_router(health_router, prefix=settings.api_prefix)
 app.include_router(experiences_router, prefix=settings.api_prefix)
 app.include_router(published_router, prefix=settings.api_prefix)
+app.include_router(studio_router, prefix=settings.api_prefix)
+app.include_router(public_router, prefix=settings.api_prefix)
+app.include_router(customer_router, prefix=settings.api_prefix)
+app.include_router(domain_published_router, prefix=settings.api_prefix)
 
 @app.get("/")
 def root():
