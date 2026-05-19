@@ -1,7 +1,5 @@
 from copy import deepcopy
 
-from app.modules.experiences.defaults import default_blocks, default_seo, default_styles
-
 
 def default_metadata(entity_kind: str) -> dict:
     base = {
@@ -85,15 +83,22 @@ def default_website_customer_fields() -> dict:
 
 
 def default_template_document(entity_kind: str, title: str, slug: str, now: str, document_id: str) -> dict:
-    blocks = default_blocks("invitation" if entity_kind == "invitation" else "web")
     data: dict = {
         "id": document_id,
         "title": title,
         "slug": slug,
-        "styles": default_styles(),
-        "layout": {"sectionOrder": [block["id"] for block in blocks]},
-        "blocks": blocks,
-        "seo": default_seo(title),
+        "styles": {
+            "themeId": None,
+            "colors": {},
+            "typography": {},
+        },
+        "layout": {"sectionOrder": []},
+        "blocks": [],
+        "seo": {
+            "title": title,
+            "description": "",
+            "noIndex": True,
+        },
         "metadata": default_metadata(entity_kind),
         "templateStatus": "draft",
         "statusHistory": [],
