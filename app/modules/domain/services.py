@@ -119,16 +119,39 @@ class TemplateService:
         self.config = config
         self.repository = repository or DomainRepository()
 
+    def _ensure_slug_available(self, slug: str, current_id: Optional[str] = None) -> None:
+        existing = self.repository.find_document_by_slug(self.config.collection, slug)
+        logger.info(
+            "Slug validation | database=%s collection=%s slug=%s found=%s foundId=%s currentId=%s",
+            self.repository.database_name(),
+            self.config.collection,
+            slug,
+            existing is not None,
+            existing.get("id") if existing else None,
+            current_id,
+        )
+        if existing and existing.get("id") != current_id:
+            raise NuvlyError(self.config.duplicate_message, 409, "DUPLICATED_SLUG")
+
     def create(self, payload) -> Dict[str, Any]:
         now = utc_now_iso()
         document_id = new_id(self.config.id_prefix)
         slug = slugify(payload.slug or payload.title)
         document = default_template_document(self.config.entity_kind, payload.title, slug, now, document_id)
+        logger.info(
+            "Template create request | database=%s collection=%s title=%s requestedSlug=%s generatedId=%s",
+            self.repository.database_name(),
+            self.config.collection,
+            payload.title,
+            slug,
+            document_id,
+        )
         for key, value in payload.model_dump(mode="json", exclude_none=True).items():
             document[key] = value
         document["updatedAt"] = now
         append_status_history(document, "templateStatus", None, "initial_draft")
         document = normalize_document(document, "templateStatus")
+        self._ensure_slug_available(document["slug"])
         logger.info("Template created | collection=%s id=%s", self.config.collection, document["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
 
@@ -174,6 +197,7 @@ class TemplateService:
             }
         )
         document = normalize_document(document, "templateStatus")
+        self._ensure_slug_available(document["slug"], current_id=template_id)
         logger.info("Template updated | collection=%s id=%s", self.config.collection, template_id)
         return self.repository.replace_document(
             self.config.collection,

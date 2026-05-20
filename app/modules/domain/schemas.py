@@ -116,6 +116,7 @@ class InvitationTemplateCreate(BaseModel):
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
+    model_config = ConfigDict(extra="ignore")
 
 
 class WebsiteTemplateCreate(BaseModel):
@@ -127,6 +128,7 @@ class WebsiteTemplateCreate(BaseModel):
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     websiteData: Optional[WebsiteData] = None
+    model_config = ConfigDict(extra="ignore")
 
 
 class InvitationTemplateUpdate(BaseModel):

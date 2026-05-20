@@ -1,5 +1,6 @@
 from pymongo import ASCENDING, MongoClient
 from pymongo.database import Database
+from pymongo.errors import OperationFailure
 
 from app.core.config import get_settings
 
@@ -11,20 +12,29 @@ def get_client() -> MongoClient:
     if _client is None:
         settings = get_settings()
         _client = MongoClient(
-    settings.mongodb_uri,
-    serverSelectionTimeoutMS=20000,
-    connectTimeoutMS=20000,
-    socketTimeoutMS=20000,
-    tls=True,
-    tlsAllowInvalidCertificates=True,
-    tlsAllowInvalidHostnames=True,
-)
+            settings.mongodb_uri,
+            serverSelectionTimeoutMS=20000,
+            connectTimeoutMS=20000,
+            socketTimeoutMS=20000,
+            tls=True,
+            tlsAllowInvalidCertificates=True,
+            tlsAllowInvalidHostnames=True,
+        )
     return _client
 
 
 def get_database() -> Database:
     settings = get_settings()
     return get_client()[settings.mongodb_db_name]
+
+
+def _drop_index_if_exists(collection, index_name: str) -> None:
+    try:
+        existing_indexes = collection.index_information()
+        if index_name in existing_indexes:
+            collection.drop_index(index_name)
+    except OperationFailure:
+        pass
 
 
 def create_indexes() -> None:
@@ -44,10 +54,12 @@ def create_indexes() -> None:
     db.website_templates.create_index([("templateStatus", ASCENDING)])
     db.website_templates.create_index([("updatedAt", ASCENDING)])
     db.website_templates.create_index([("metadata.catalogVisible", ASCENDING)])
-    db.customer_invitations.create_index([("slug", ASCENDING)], unique=True)
+    _drop_index_if_exists(db.customer_invitations, "slug_1")
+    _drop_index_if_exists(db.customer_websites, "slug_1")
+    db.customer_invitations.create_index([("slug", ASCENDING)])
     db.customer_invitations.create_index([("customerStatus", ASCENDING)])
     db.customer_invitations.create_index([("updatedAt", ASCENDING)])
-    db.customer_websites.create_index([("slug", ASCENDING)], unique=True)
+    db.customer_websites.create_index([("slug", ASCENDING)])
     db.customer_websites.create_index([("customerStatus", ASCENDING)])
     db.customer_websites.create_index([("updatedAt", ASCENDING)])
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING)])
