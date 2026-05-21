@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 TemplateStatus = Literal["draft", "private_preview", "published", "archived"]
@@ -92,6 +92,20 @@ class WebsiteData(BaseModel):
     analyticsEnabled: bool = False
 
 
+class WebsiteBlock(BaseModel):
+    id: str
+    type: str
+    label: Optional[str] = None
+    category: Optional[str] = None
+    description: Optional[str] = None
+    variant: str
+    enabled: bool = True
+    order: int = Field(default=1, ge=1)
+    props: Dict[str, Any] = Field(default_factory=dict)
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
+
+
 class PaymentInfo(BaseModel):
     status: PaymentStatus = "unpaid"
     provider: Optional[str] = None
@@ -122,13 +136,13 @@ class InvitationTemplateCreate(BaseModel):
 class WebsiteTemplateCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
-    styles: Optional[Styles] = None
-    layout: Optional[Layout] = None
-    blocks: Optional[List[ExperienceBlock]] = None
-    seo: Optional[Seo] = None
-    metadata: Optional[Metadata] = None
-    websiteData: Optional[WebsiteData] = None
-    model_config = ConfigDict(extra="ignore")
+    experienceType: Literal["web"] = "web"
+    styles: Optional[Dict[str, Any]] = None
+    layout: Optional[Dict[str, Any]] = None
+    blocks: Optional[List[WebsiteBlock]] = None
+    seo: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    model_config = ConfigDict(extra="allow")
 
 
 class InvitationTemplateUpdate(BaseModel):
@@ -145,12 +159,13 @@ class InvitationTemplateUpdate(BaseModel):
 class WebsiteTemplateUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: str = Field(min_length=1, max_length=160)
-    styles: Styles = Field(default_factory=Styles)
-    layout: Layout = Field(default_factory=Layout)
-    blocks: List[ExperienceBlock] = Field(default_factory=list)
-    seo: Seo = Field(default_factory=Seo)
-    metadata: Metadata = Field(default_factory=Metadata)
-    websiteData: WebsiteData = Field(default_factory=WebsiteData)
+    experienceType: Literal["web"] = "web"
+    styles: Dict[str, Any] = Field(default_factory=dict)
+    layout: Dict[str, Any] = Field(default_factory=dict)
+    blocks: List[WebsiteBlock] = Field(default_factory=list)
+    seo: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    model_config = ConfigDict(extra="allow")
 
 
 class InvitationTemplateResponse(InvitationTemplateUpdate):
@@ -172,7 +187,12 @@ class WebsiteTemplateResponse(WebsiteTemplateUpdate):
     lastPublishedAt: Optional[str] = None
     createdAt: str
     updatedAt: str
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="allow")
+
+    @computed_field
+    @property
+    def status(self) -> TemplateStatus:
+        return self.templateStatus
 
 
 class CustomerProjectCreate(BaseModel):

@@ -931,3 +931,85 @@ Abrir Swagger:
 ```txt
 http://localhost:8000/api/docs
 ```
+
+---
+
+# Contrato Studio Website Templates
+
+## GET `/api/studio/website-templates/{id}`
+
+Respuesta esperada para rehidratación del editor:
+
+```json
+{
+  "id": "wtpl_xxx",
+  "title": "Studio Contract Template",
+  "slug": "studio-contract-template",
+  "experienceType": "web",
+  "status": "draft",
+  "templateStatus": "draft",
+  "styles": {
+    "themeId": "solarized-studio",
+    "colors": {},
+    "typography": {}
+  },
+  "layout": {
+    "sectionOrder": ["blk_navigation", "blk_hero"]
+  },
+  "blocks": [
+    {
+      "id": "blk_navigation",
+      "type": "navigation",
+      "label": "Navigation",
+      "category": "marketing",
+      "description": "Block navigation description",
+      "variant": "navigation-variant-a",
+      "enabled": true,
+      "order": 1,
+      "props": {},
+      "settings": {}
+    }
+  ],
+  "seo": {
+    "title": "Studio Contract Template",
+    "description": "Website template round-trip contract.",
+    "noIndex": true
+  },
+  "metadata": {
+    "category": "landing",
+    "style": "editorial",
+    "purpose": "lead-generation",
+    "coverImage": "/assets/web-pages/image-1.png",
+    "badge": "Nuevo",
+    "featured": true,
+    "level": "premium",
+    "basePrice": 149,
+    "tags": ["agency"],
+    "catalogVisible": true,
+    "previewVariant": "desktop",
+    "previewStyle": {
+      "frame": "browser"
+    }
+  },
+  "statusHistory": [
+    {
+      "status": "draft",
+      "changedAt": "2026-05-20T00:00:00Z",
+      "changedBy": null,
+      "reason": "initial_draft"
+    }
+  ],
+  "publishedSnapshotId": null,
+  "lastPublishedAt": null,
+  "createdAt": "2026-05-20T00:00:00Z",
+  "updatedAt": "2026-05-20T00:00:00Z"
+}
+```
+
+Reglas del contrato:
+
+- `experienceType` siempre debe salir como `"web"`.
+- `styles`, `layout`, `blocks`, `seo` y `metadata` se devuelven completos, preservando claves extra persistidas por el front.
+- Cada bloque preserva `label`, `category`, `description`, `variant`, `props`, `settings` y cualquier otro campo adicional persistido.
+- `websiteData` solo se devuelve si realmente fue persistido; el backend no inventa un objeto vacío.
+- El contrato soporta round-trip `guardar -> leer -> guardar` sin perder información estructural del template.

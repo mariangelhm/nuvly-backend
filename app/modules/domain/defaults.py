@@ -87,6 +87,7 @@ def default_template_document(entity_kind: str, title: str, slug: str, now: str,
         "id": document_id,
         "title": title,
         "slug": slug,
+        "experienceType": "invitation" if entity_kind == "invitation" else "web",
         "styles": {
             "themeId": None,
             "colors": {},
@@ -109,6 +110,4 @@ def default_template_document(entity_kind: str, title: str, slug: str, now: str,
     }
     if entity_kind == "invitation":
         data["invitationData"] = default_invitation_data()
-    else:
-        data["websiteData"] = default_website_data()
     return data

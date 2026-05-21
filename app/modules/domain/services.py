@@ -24,6 +24,7 @@ class TemplateConfig:
     snapshot_collection: str
     source_type: str
     entity_kind: str
+    experience_type: str
     id_prefix: str
     not_found_message: str
     not_found_code: str
@@ -50,6 +51,7 @@ INVITATION_TEMPLATE_CONFIG = TemplateConfig(
     snapshot_collection="invitation_template_snapshots",
     source_type="invitation_template",
     entity_kind="invitation",
+    experience_type="invitation",
     id_prefix="itpl",
     not_found_message="Template de invitacion no encontrado.",
     not_found_code="INVITATION_TEMPLATE_NOT_FOUND",
@@ -62,6 +64,7 @@ WEBSITE_TEMPLATE_CONFIG = TemplateConfig(
     snapshot_collection="website_template_snapshots",
     source_type="website_template",
     entity_kind="website",
+    experience_type="web",
     id_prefix="wtpl",
     not_found_message="Template de website no encontrado.",
     not_found_code="WEBSITE_TEMPLATE_NOT_FOUND",
@@ -114,6 +117,18 @@ def ensure_snapshot(document: Optional[Dict[str, Any]], error_message: str, erro
     return document
 
 
+SERVER_MANAGED_TEMPLATE_FIELDS = {
+    "id",
+    "templateStatus",
+    "status",
+    "statusHistory",
+    "publishedSnapshotId",
+    "lastPublishedAt",
+    "createdAt",
+    "updatedAt",
+}
+
+
 class TemplateService:
     def __init__(self, config: TemplateConfig, repository: DomainRepository | None = None):
         self.config = config
@@ -138,6 +153,10 @@ class TemplateService:
         document_id = new_id(self.config.id_prefix)
         slug = slugify(payload.slug or payload.title)
         document = default_template_document(self.config.entity_kind, payload.title, slug, now, document_id)
+        payload_data = payload.model_dump(mode="json", exclude_none=True)
+        for field in SERVER_MANAGED_TEMPLATE_FIELDS:
+            payload_data.pop(field, None)
+        payload_data["experienceType"] = self.config.experience_type
         logger.info(
             "Template create request | database=%s collection=%s title=%s requestedSlug=%s generatedId=%s",
             self.repository.database_name(),
@@ -146,8 +165,10 @@ class TemplateService:
             slug,
             document_id,
         )
-        for key, value in payload.model_dump(mode="json", exclude_none=True).items():
+        for key, value in payload_data.items():
             document[key] = value
+        if self.config.data_field not in payload_data:
+            document.pop(self.config.data_field, None)
         document["updatedAt"] = now
         append_status_history(document, "templateStatus", None, "initial_draft")
         document = normalize_document(document, "templateStatus")
@@ -173,21 +194,24 @@ class TemplateService:
             filters["metadata.level"] = level
         if catalog_visible is not None:
             filters["metadata.catalogVisible"] = catalog_visible
-        return self.repository.find_documents(self.config.collection, filters, limit=limit, skip=skip)
+        return [self._prepare_template_response(document) for document in self.repository.find_documents(self.config.collection, filters, limit=limit, skip=skip)]
 
     def get(self, template_id: str) -> Dict[str, Any]:
         document = self.repository.find_document(self.config.collection, {"id": template_id})
         if not document:
             raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
-        return document
+        return self._prepare_template_response(document)
 
     def update(self, template_id: str, payload) -> Dict[str, Any]:
         current = self.get(template_id)
         now = utc_now_iso()
-        document = payload.model_dump(mode="json")
+        document = payload.model_dump(mode="json", exclude_none=True)
+        for field in SERVER_MANAGED_TEMPLATE_FIELDS:
+            document.pop(field, None)
         document.update(
             {
                 "id": current["id"],
+                "experienceType": self.config.experience_type,
                 "templateStatus": current["templateStatus"],
                 "statusHistory": current.get("statusHistory", []),
                 "publishedSnapshotId": current.get("publishedSnapshotId"),
@@ -330,20 +354,23 @@ class TemplateService:
         raise NuvlyError("El slug solicitado no corresponde al snapshot publicado vigente.", 404, "PUBLIC_TEMPLATE_NOT_FOUND")
 
     def _build_snapshot_payload(self, document: Dict[str, Any], version: int, now: str) -> Dict[str, Any]:
-        return {
+        payload = {
             "id": document["id"],
             "title": document["title"],
             "slug": document["slug"],
+            "experienceType": self.config.experience_type,
             "templateStatus": "published",
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
             "blocks": deepcopy(document.get("blocks", [])),
             "seo": deepcopy(document.get("seo", {})),
             "metadata": deepcopy(document.get("metadata", {})),
-            self.config.data_field: deepcopy(document.get(self.config.data_field, {})),
             "version": version,
             "publishedAt": now,
         }
+        if self.config.data_field in document:
+            payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
+        return payload
 
     def _get_published_snapshot_from_document(self, document: Dict[str, Any]) -> Dict[str, Any]:
         snapshot_id = document.get("publishedSnapshotId")
@@ -351,6 +378,11 @@ class TemplateService:
             raise NuvlyError("El template publicado no tiene snapshot asociado.", 409, "PUBLISHED_TEMPLATE_WITHOUT_SNAPSHOT")
         snapshot = self.repository.find_document(self.config.snapshot_collection, {"id": snapshot_id})
         return ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_TEMPLATE_SNAPSHOT_NOT_FOUND")
+
+    def _prepare_template_response(self, document: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = deepcopy(document)
+        prepared["experienceType"] = self.config.experience_type
+        return prepared
 
 
 class CustomerProjectService:
@@ -380,7 +412,6 @@ class CustomerProjectService:
             "blocks": deepcopy(base_snapshot.get("blocks", [])),
             "seo": deepcopy(base_snapshot.get("seo", {})),
             "metadata": deepcopy(base_snapshot.get("metadata", {})),
-            self.config.data_field: deepcopy(base_snapshot.get(self.config.data_field, {})),
             "templateId": template["id"],
             "templateSnapshotId": template_snapshot["id"],
             "customerData": payload.customerData.model_dump(mode="json"),
@@ -392,6 +423,8 @@ class CustomerProjectService:
             "createdAt": now,
             "updatedAt": now,
         }
+        if self.config.data_field in base_snapshot:
+            document[self.config.data_field] = deepcopy(base_snapshot.get(self.config.data_field))
         if self.config.entity_kind == "invitation":
             document.update(default_invitation_customer_fields())
         else:
@@ -534,7 +567,6 @@ class CustomerProjectService:
             "blocks": deepcopy(document.get("blocks", [])),
             "seo": deepcopy(document.get("seo", {})),
             "metadata": deepcopy(document.get("metadata", {})),
-            self.config.data_field: deepcopy(document.get(self.config.data_field, {})),
             "templateId": document["templateId"],
             "templateSnapshotId": document["templateSnapshotId"],
             "customerData": deepcopy(document.get("customerData", default_customer_data())),
@@ -542,6 +574,8 @@ class CustomerProjectService:
             "version": version,
             "publishedAt": now,
         }
+        if self.config.data_field in document:
+            payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
         if self.config.entity_kind == "invitation":
             payload["guests"] = deepcopy(document.get("guests", []))
             payload["rsvpResponses"] = deepcopy(document.get("rsvpResponses", []))
