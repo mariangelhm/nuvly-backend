@@ -14,6 +14,7 @@ NON_INDEXABLE_STATUSES = {
     "editing",
     "abandoned",
     "pending_payment",
+    "payment_failed",
     "paid",
     "cancelled",
 }

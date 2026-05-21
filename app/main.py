@@ -15,6 +15,7 @@ from app.modules.experiences.routes import router as experiences_router
 from app.modules.health.routes import router as health_router
 from app.modules.media.routes import router as media_router
 from app.modules.media.service import ensure_static_directories
+from app.modules.payments.routes import router as payments_router
 from app.modules.published.routes import router as published_router
 
 configure_logging()
@@ -57,6 +58,7 @@ register_exception_handlers(app)
 app.include_router(health_router, prefix=settings.api_prefix)
 app.include_router(experiences_router, prefix=settings.api_prefix)
 app.include_router(media_router, prefix=settings.api_prefix)
+app.include_router(payments_router, prefix=settings.api_prefix)
 app.include_router(published_router, prefix=settings.api_prefix)
 app.include_router(studio_router, prefix=settings.api_prefix)
 app.include_router(public_router, prefix=settings.api_prefix)
