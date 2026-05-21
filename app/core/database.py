@@ -74,6 +74,10 @@ def create_indexes() -> None:
     db.customer_website_snapshots.create_index([("sourceId", ASCENDING)])
     db.customer_website_snapshots.create_index([("sourceId", ASCENDING), ("version", ASCENDING)], unique=True)
     db.customer_website_snapshots.create_index([("slug", ASCENDING)])
+    db.media_assets.create_index([("id", ASCENDING)], unique=True)
+    db.media_assets.create_index([("scope", ASCENDING)])
+    db.media_assets.create_index([("ownerId", ASCENDING)])
+    db.media_assets.create_index([("createdAt", ASCENDING)])
 
 
 def ping_database() -> bool:

@@ -205,6 +205,9 @@ def test_website_template_contract_preserves_complete_shape() -> None:
     _assert_contract_subset(response)
     assert response["styles"]["effects"]["borderRadius"]["card"] == 20
     assert response["metadata"]["customFlag"] == "preserve-me"
+    assert response["metadata"]["coverImage"] == "/assets/web-pages/image-1.png"
+    assert response["seo"]["openGraph"]["image"] == "/assets/web-pages/image-1.png"
+    assert response["blocks"][4]["props"]["items"][0]["image"] == "/assets/web-pages/image-5.png"
     assert "websiteData" not in response
 
 

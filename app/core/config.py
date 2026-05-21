@@ -16,6 +16,8 @@ class Settings(BaseSettings):
         default="http://localhost:5173,http://localhost:3000",
         alias="CORS_ORIGINS",
     )
+    public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
+    media_max_size_mb: int = Field(default=5, alias="MEDIA_MAX_SIZE_MB")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -27,6 +29,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> List[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def media_max_size_bytes(self) -> int:
+        return self.media_max_size_mb * 1024 * 1024
 
 
 @lru_cache
@@ -41,6 +47,6 @@ def get_settings() -> Settings:
                 missing_or_invalid.append(field_name)
         details = ", ".join(missing_or_invalid) if missing_or_invalid else str(exc)
         raise RuntimeError(
-            "Invalid environment configuration. Check MONGODB_URI, MONGODB_DB_NAME, API_PREFIX and CORS_ORIGINS. "
+            "Invalid environment configuration. Check MONGODB_URI, MONGODB_DB_NAME, API_PREFIX, CORS_ORIGINS, PUBLIC_BASE_URL and MEDIA_MAX_SIZE_MB. "
             f"Details: {details}"
         ) from exc
