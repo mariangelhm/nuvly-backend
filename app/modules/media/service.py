@@ -21,6 +21,7 @@ ALLOWED_CONTENT_TYPES: Final[dict[str, str]] = {
     "image/svg+xml": "svg",
 }
 DEFAULT_SCOPE = "general"
+MAX_BATCH_FILES = 20
 
 
 def ensure_static_directories() -> None:
@@ -155,14 +156,27 @@ def _raise_invalid_file_type() -> None:
     )
 
 
-def upload_media_asset(
+def _resolve_scope(scope: str | None) -> str:
+    return scope or DEFAULT_SCOPE
+
+
+def _validate_batch_size(files: list[UploadFile]) -> None:
+    if len(files) > MAX_BATCH_FILES:
+        raise NuvlyError(
+            f"Batch upload supports a maximum of {MAX_BATCH_FILES} files per request.",
+            status_code=400,
+            code="TOO_MANY_FILES",
+        )
+
+
+def _build_asset_payload(
     *,
     file: UploadFile,
-    scope: str | None,
+    scope: str,
     owner_id: str | None,
     request: Request,
+    client_key: str | None = None,
 ) -> dict:
-    ensure_static_directories()
     settings = get_settings()
 
     content_type = (file.content_type or "").lower().strip()
@@ -179,50 +193,142 @@ def upload_media_asset(
             code="FILE_TOO_LARGE",
         )
 
-    resolved_scope = scope or DEFAULT_SCOPE
     asset_id = f"asset_{int(datetime.now(timezone.utc).timestamp() * 1000)}_{uuid4().hex}"
     filename = f"{asset_id}.{extension}"
-    upload_directory = ensure_upload_directory(resolved_scope)
+    upload_directory = ensure_upload_directory(scope)
     file_path = upload_directory / filename
     relative_path = file_path.as_posix()
+    width, height = extract_dimensions(content_type, content)
+    created_at = datetime.now(timezone.utc)
+    asset_url = build_public_url(request, relative_path)
+    document = {
+        "id": asset_id,
+        "url": asset_url,
+        "thumbnailUrl": asset_url,
+        "mimeType": content_type,
+        "width": width,
+        "height": height,
+        "size": size,
+        "scope": scope,
+        "ownerId": owner_id,
+        "createdAt": created_at,
+        "storage": {
+            "provider": "render_filesystem_mvp",
+            "path": relative_path,
+            "filename": filename,
+        },
+    }
+    if client_key is not None:
+        document["clientKey"] = client_key
+
+    return {"document": document, "content": content, "file_path": file_path}
+
+
+def _persist_prepared_assets(prepared_assets: list[dict], *, error_code: str, error_message: str) -> list[dict]:
+    collection = get_database().media_assets
+    saved_paths: list[Path] = []
+    inserted_ids: list[str] = []
 
     try:
-        width, height = extract_dimensions(content_type, content)
-
         # Temporary MVP storage for Render. This filesystem is not permanent and must
         # be migrated later to object storage such as Cloudinary, S3 or Cloudflare R2.
-        file_path.write_bytes(content)
+        for prepared_asset in prepared_assets:
+            prepared_asset["file_path"].write_bytes(prepared_asset["content"])
+            saved_paths.append(prepared_asset["file_path"])
 
-        created_at = datetime.now(timezone.utc)
-        asset_url = build_public_url(request, relative_path)
-        document = {
-            "id": asset_id,
-            "url": asset_url,
-            "thumbnailUrl": asset_url,
-            "mimeType": content_type,
-            "width": width,
-            "height": height,
-            "size": size,
-            "scope": resolved_scope,
-            "ownerId": owner_id,
-            "createdAt": created_at,
-            "storage": {
-                "provider": "render_filesystem_mvp",
-                "path": relative_path,
-                "filename": filename,
-            },
-        }
-        get_database().media_assets.insert_one(document)
-        return document
+        documents = [prepared_asset["document"] for prepared_asset in prepared_assets]
+        if len(documents) == 1:
+            collection.insert_one(documents[0])
+            inserted_ids.append(documents[0]["id"])
+        else:
+            if hasattr(collection, "insert_many"):
+                collection.insert_many(documents, ordered=True)
+                inserted_ids.extend(document["id"] for document in documents)
+            else:
+                for document in documents:
+                    collection.insert_one(document)
+                    inserted_ids.append(document["id"])
+        return documents
     except NuvlyError:
         raise
     except Exception as exc:
-        if file_path.exists():
-            file_path.unlink(missing_ok=True)
+        for file_path in saved_paths:
+            if file_path.exists():
+                file_path.unlink(missing_ok=True)
+        if inserted_ids and hasattr(collection, "delete_many"):
+            collection.delete_many({"id": {"$in": inserted_ids}})
         raise NuvlyError(
-            f"Media upload failed: {exc}",
+            f"{error_message}: {exc}",
             status_code=500,
-            code="UPLOAD_FAILED",
+            code=error_code,
         ) from exc
+
+
+def upload_media_asset(
+    *,
+    file: UploadFile,
+    scope: str | None,
+    owner_id: str | None,
+    request: Request,
+) -> dict:
+    ensure_static_directories()
+    try:
+        prepared_asset = _build_asset_payload(
+            file=file,
+            scope=_resolve_scope(scope),
+            owner_id=owner_id,
+            request=request,
+        )
+        return _persist_prepared_assets(
+            [prepared_asset],
+            error_code="UPLOAD_FAILED",
+            error_message="Media upload failed",
+        )[0]
     finally:
         file.file.close()
+
+
+def upload_media_assets_batch(
+    *,
+    files: list[UploadFile],
+    scope: str | None,
+    owner_id: str | None,
+    client_keys: list[str] | None,
+    request: Request,
+) -> dict:
+    ensure_static_directories()
+    _validate_batch_size(files)
+
+    if client_keys is not None and len(client_keys) != len(files):
+        for file in files:
+            file.file.close()
+        raise NuvlyError(
+            "clientKeys must match the number of uploaded files.",
+            status_code=400,
+            code="UPLOAD_BATCH_FAILED",
+        )
+
+    resolved_scope = _resolve_scope(scope)
+    prepared_assets: list[dict] = []
+    try:
+        for index, file in enumerate(files):
+            client_key = client_keys[index] if client_keys is not None else None
+            prepared_assets.append(
+                _build_asset_payload(
+                    file=file,
+                    scope=resolved_scope,
+                    owner_id=owner_id,
+                    request=request,
+                    client_key=client_key,
+                )
+            )
+
+        documents = _persist_prepared_assets(
+            prepared_assets,
+            error_code="UPLOAD_BATCH_FAILED",
+            error_message="Batch media upload failed",
+        )
+        return {"assets": documents, "errors": []}
+    finally:
+        for file in files:
+            file.file.close()

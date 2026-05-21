@@ -10,6 +10,7 @@ MediaScope = Literal[
     "invitation_template",
     "customer_website",
     "customer_invitation",
+    "general",
 ]
 
 
@@ -24,3 +25,12 @@ class MediaAssetResponse(BaseModel):
     scope: str
     ownerId: str | None = None
     createdAt: datetime
+
+
+class BatchMediaAssetResponse(MediaAssetResponse):
+    clientKey: str | None = None
+
+
+class MediaBatchUploadResponse(BaseModel):
+    assets: list[BatchMediaAssetResponse]
+    errors: list[dict[str, str]]

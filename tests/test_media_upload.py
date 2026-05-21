@@ -28,6 +28,13 @@ class InMemoryMediaCollection:
     def insert_one(self, document: dict) -> None:
         self.documents.append(document)
 
+    def insert_many(self, documents: list[dict], ordered: bool = True) -> None:
+        self.documents.extend(documents)
+
+    def delete_many(self, filters: dict) -> None:
+        ids = set(filters.get("id", {}).get("$in", []))
+        self.documents = [document for document in self.documents if document.get("id") not in ids]
+
 
 class InMemoryDatabase:
     def __init__(self) -> None:
@@ -118,3 +125,104 @@ def test_media_route_is_registered_in_openapi() -> None:
     paths = main_module.app.openapi()["paths"]
     assert "/api/media/upload" in paths
     assert "post" in paths["/api/media/upload"]
+    assert "/api/media/upload-batch" in paths
+    assert "post" in paths["/api/media/upload-batch"]
+
+
+def test_media_batch_upload_persists_all_assets(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.modules.media import service as media_service
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    database = InMemoryDatabase()
+    test_dir = _build_test_dir()
+
+    monkeypatch.setattr(media_service, "STATIC_DIR", test_dir / "static")
+    monkeypatch.setattr(media_service, "get_database", lambda: database)
+    monkeypatch.setattr(settings, "public_base_url", None)
+
+    payload = media_service.upload_media_assets_batch(
+        files=[
+            UploadFile(filename="hero.png", file=BytesIO(PNG_1X1), headers={"content-type": "image/png"}),
+            UploadFile(filename="gallery.png", file=BytesIO(PNG_1X1), headers={"content-type": "image/png"}),
+        ],
+        scope="website_template",
+        owner_id="tpl_123",
+        client_keys=[
+            "blocks.blk_hero.props.mediaImage",
+            "blocks.blk_gallery.props.images.0",
+        ],
+        request=_build_request(),
+    )
+
+    assert payload["errors"] == []
+    assert len(payload["assets"]) == 2
+    assert payload["assets"][0]["clientKey"] == "blocks.blk_hero.props.mediaImage"
+    assert payload["assets"][1]["clientKey"] == "blocks.blk_gallery.props.images.0"
+    assert len(database.media_assets.documents) == 2
+
+
+def test_media_batch_upload_rejects_too_many_files(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.modules.media import service as media_service
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    test_dir = _build_test_dir()
+
+    monkeypatch.setattr(media_service, "STATIC_DIR", test_dir / "static")
+    monkeypatch.setattr(media_service, "get_database", lambda: InMemoryDatabase())
+    monkeypatch.setattr(settings, "public_base_url", None)
+
+    files = [
+        UploadFile(filename=f"image-{index}.png", file=BytesIO(PNG_1X1), headers={"content-type": "image/png"})
+        for index in range(21)
+    ]
+
+    try:
+        media_service.upload_media_assets_batch(
+            files=files,
+            scope="general",
+            owner_id=None,
+            client_keys=None,
+            request=_build_request(),
+        )
+    except NuvlyError as exc:
+        assert exc.code == "TOO_MANY_FILES"
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("Expected too many files error")
+
+
+def test_media_batch_upload_rejects_whole_batch_on_validation_error(monkeypatch) -> None:
+    from app.core.config import get_settings
+    from app.modules.media import service as media_service
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    database = InMemoryDatabase()
+    test_dir = _build_test_dir()
+
+    monkeypatch.setattr(media_service, "STATIC_DIR", test_dir / "static")
+    monkeypatch.setattr(media_service, "get_database", lambda: database)
+    monkeypatch.setattr(settings, "public_base_url", None)
+
+    try:
+        media_service.upload_media_assets_batch(
+            files=[
+                UploadFile(filename="hero.png", file=BytesIO(PNG_1X1), headers={"content-type": "image/png"}),
+                UploadFile(filename="bad.txt", file=BytesIO(b"oops"), headers={"content-type": "text/plain"}),
+            ],
+            scope="website_template",
+            owner_id="tpl_123",
+            client_keys=["blocks.blk_hero.props.mediaImage", "blocks.blk_gallery.props.images.0"],
+            request=_build_request(),
+        )
+    except NuvlyError as exc:
+        assert exc.code == "INVALID_FILE_TYPE"
+        assert exc.status_code == 400
+    else:
+        raise AssertionError("Expected invalid file type error")
+
+    assert database.media_assets.documents == []

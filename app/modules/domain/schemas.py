@@ -267,3 +267,15 @@ class SnapshotResponse(BaseModel):
     snapshot: Dict[str, Any]
     createdAt: str
     publishedAt: str
+
+
+class PublicTemplateCardResponse(BaseModel):
+    id: str
+    title: str
+    slug: str
+    templateStatus: TemplateStatus
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    seo: Dict[str, Any] = Field(default_factory=dict)
+    updatedAt: Optional[str] = None
+    lastPublishedAt: Optional[str] = None
+    publishedSnapshotId: Optional[str] = None

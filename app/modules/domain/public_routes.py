@@ -2,7 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
-from app.modules.domain.schemas import SnapshotResponse
+from app.modules.domain.schemas import PublicTemplateCardResponse, SnapshotResponse
 from app.modules.domain.services import (
     INVITATION_TEMPLATE_CONFIG,
     WEBSITE_TEMPLATE_CONFIG,
@@ -21,7 +21,7 @@ def parse_csv(value: Optional[str]) -> list[str] | None:
     return parts or None
 
 
-@router.get("/invitation-templates", response_model=list[SnapshotResponse])
+@router.get("/invitation-templates", response_model=list[PublicTemplateCardResponse])
 def list_public_invitation_templates(
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
@@ -38,7 +38,7 @@ def get_public_invitation_template(slug: str):
     return invitation_service.get_public_by_slug(slug)
 
 
-@router.get("/website-templates", response_model=list[SnapshotResponse])
+@router.get("/website-templates", response_model=list[PublicTemplateCardResponse])
 def list_public_website_templates(
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),

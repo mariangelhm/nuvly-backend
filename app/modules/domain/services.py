@@ -303,10 +303,7 @@ class TemplateService:
         tags: Optional[List[str]] = None,
         extra_filter_value: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        filters: Dict[str, Any] = {
-            "templateStatus": "published",
-            "metadata.catalogVisible": True,
-        }
+        filters: Dict[str, Any] = {"templateStatus": "published"}
         if category:
             filters["metadata.category"] = category
         if level:
@@ -326,7 +323,18 @@ class TemplateService:
             skip=skip,
             sort_field="lastPublishedAt",
         )
-        return [self._get_published_snapshot_from_document(document) for document in documents]
+        logger.info(
+            "Public templates query | collection=%s filter=%s totalPublishedFound=%s",
+            self.config.collection,
+            filters,
+            len(documents),
+        )
+        logger.info(
+            "Public templates result | collection=%s returnedIds=%s",
+            self.config.collection,
+            [document.get("id") for document in documents],
+        )
+        return [self._build_public_card(document) for document in documents]
 
     def get_public_by_slug(self, slug: str) -> Dict[str, Any]:
         normalized_slug = slugify(slug)
@@ -343,7 +351,6 @@ class TemplateService:
                 {
                     "id": snapshot["sourceId"],
                     "templateStatus": "published",
-                    "metadata.catalogVisible": True,
                     "publishedSnapshotId": snapshot["id"],
                 },
             )
@@ -372,12 +379,31 @@ class TemplateService:
             payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
         return payload
 
-    def _get_published_snapshot_from_document(self, document: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_public_card(self, document: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": document["id"],
+            "title": document.get("title", ""),
+            "slug": document.get("slug", ""),
+            "templateStatus": document.get("templateStatus", "published"),
+            "metadata": deepcopy(document.get("metadata", {})),
+            "seo": deepcopy(document.get("seo", {})),
+            "updatedAt": document.get("updatedAt"),
+            "lastPublishedAt": document.get("lastPublishedAt"),
+            "publishedSnapshotId": document.get("publishedSnapshotId"),
+        }
+
+    def _get_published_snapshot_from_document(self, document: Dict[str, Any], raise_on_missing: bool = True) -> Optional[Dict[str, Any]]:
         snapshot_id = document.get("publishedSnapshotId")
         if not snapshot_id:
-            raise NuvlyError("El template publicado no tiene snapshot asociado.", 409, "PUBLISHED_TEMPLATE_WITHOUT_SNAPSHOT")
+            if raise_on_missing:
+                raise NuvlyError("El template publicado no tiene snapshot asociado.", 409, "PUBLISHED_TEMPLATE_WITHOUT_SNAPSHOT")
+            return None
         snapshot = self.repository.find_document(self.config.snapshot_collection, {"id": snapshot_id})
-        return ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_TEMPLATE_SNAPSHOT_NOT_FOUND")
+        if snapshot:
+            return snapshot
+        if raise_on_missing:
+            raise NuvlyError("Snapshot publicado no encontrado.", 404, "PUBLISHED_TEMPLATE_SNAPSHOT_NOT_FOUND")
+        return None
 
     def _prepare_template_response(self, document: Dict[str, Any]) -> Dict[str, Any]:
         prepared = deepcopy(document)
