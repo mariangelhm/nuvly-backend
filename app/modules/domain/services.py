@@ -441,7 +441,7 @@ class CustomerProjectService:
             "templateId": template["id"],
             "templateSnapshotId": template_snapshot["id"],
             "customerData": payload.customerData.model_dump(mode="json"),
-            "customerStatus": "temporary",
+            "customerStatus": "draft",
             "payment": default_payment(),
             "statusHistory": [],
             "publishedSnapshotId": None,
@@ -458,6 +458,7 @@ class CustomerProjectService:
 
         append_status_history(document, "customerStatus", None, "created_from_template")
         document = normalize_document(document, "customerStatus")
+        document["seo"] = deepcopy(base_snapshot.get("seo", {}))
         logger.info("Customer project created | collection=%s id=%s template=%s", self.config.collection, document["id"], template["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
 

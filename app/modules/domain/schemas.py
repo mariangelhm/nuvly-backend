@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 TemplateStatus = Literal["draft", "private_preview", "published", "archived"]
-CustomerStatus = Literal["temporary", "editing", "abandoned", "pending_payment", "paid", "published", "cancelled"]
+CustomerStatus = Literal["draft", "temporary", "editing", "abandoned", "pending_payment", "paid", "published", "cancelled"]
 PaymentStatus = Literal["unpaid", "pending", "paid", "refunded"]
 
 

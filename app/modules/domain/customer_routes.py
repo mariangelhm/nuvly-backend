@@ -19,6 +19,10 @@ router = APIRouter(prefix="/customer", tags=["customer"])
 invitation_service = CustomerProjectService(CUSTOMER_INVITATION_CONFIG)
 website_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG)
 
+# TODO MVP: If we need template_viewed/template_clicked metrics later, expose them
+# in a separate analytics endpoint such as POST /api/analytics/events instead of
+# creating customer projects just for tracking public catalog interactions.
+
 
 @router.post("/invitations", response_model=CustomerInvitationResponse, status_code=201)
 def create_customer_invitation(payload: CustomerProjectCreate):
