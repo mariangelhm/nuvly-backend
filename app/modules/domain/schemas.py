@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
-TemplateStatus = Literal["draft", "private_preview", "published", "archived"]
+TemplateStatus = Literal["draft", "private_preview", "published", "unpublished", "archived"]
 CustomerStatus = Literal["draft", "temporary", "editing", "abandoned", "pending_payment", "payment_failed", "paid", "published", "cancelled"]
 PaymentStatus = Literal["unpaid", "pending", "paid", "failed", "refunded"]
 

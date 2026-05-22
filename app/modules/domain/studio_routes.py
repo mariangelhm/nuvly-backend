@@ -59,6 +59,11 @@ def publish_invitation_template(template_id: str):
     return invitation_service.publish(template_id)
 
 
+@router.post("/invitation-templates/{template_id}/unpublish", response_model=InvitationTemplateResponse)
+def unpublish_invitation_template(template_id: str):
+    return invitation_service.unpublish(template_id)
+
+
 @router.post("/website-templates", response_model=WebsiteTemplateResponse, status_code=201)
 def create_website_template(payload: WebsiteTemplateCreate):
     return website_service.create(payload)
@@ -94,3 +99,8 @@ def update_website_template_status(template_id: str, payload: TemplateStatusUpda
 @router.post("/website-templates/{template_id}/publish", response_model=SnapshotResponse)
 def publish_website_template(template_id: str):
     return website_service.publish(template_id)
+
+
+@router.post("/website-templates/{template_id}/unpublish", response_model=WebsiteTemplateResponse)
+def unpublish_website_template(template_id: str):
+    return website_service.unpublish(template_id)

@@ -9,6 +9,7 @@ from app.modules.experiences.utils import slugify
 NON_INDEXABLE_STATUSES = {
     "draft",
     "private_preview",
+    "unpublished",
     "archived",
     "temporary",
     "editing",

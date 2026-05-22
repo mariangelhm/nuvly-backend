@@ -4,6 +4,7 @@ from copy import deepcopy
 import logging
 from typing import Any, Dict
 
+from app.core.errors import NuvlyError
 from app.modules.domain.schemas import InvitationTemplateCreate, WebsiteTemplateCreate
 from app.modules.domain.services import (
     INVITATION_TEMPLATE_CONFIG,
@@ -238,3 +239,26 @@ def test_public_list_filters_by_template_status_not_status_field() -> None:
     public_items = service.list_public()
 
     assert public_items == []
+
+
+def test_unpublished_template_is_hidden_from_public_catalog_and_detail() -> None:
+    repository = InMemoryDomainRepository()
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))
+    service.publish(created["id"])
+    unpublished = service.unpublish(created["id"], changed_by="studio", reason="unpublish_template")
+
+    assert unpublished["templateStatus"] == "unpublished"
+    assert unpublished["lastPublishedAt"] is not None
+    assert unpublished["publishedSnapshotId"] is not None
+    assert unpublished["statusHistory"][-1]["status"] == "unpublished"
+    assert service.list_public() == []
+
+    try:
+        service.get_public_by_slug(created["slug"])
+    except NuvlyError as exc:
+        assert exc.status_code == 404
+        assert exc.code == "PUBLIC_TEMPLATE_NOT_FOUND"
+    else:
+        raise AssertionError("Expected unpublished template to be unavailable publicly")

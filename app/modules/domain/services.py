@@ -296,6 +296,25 @@ class TemplateService:
         logger.info("Template published | collection=%s id=%s snapshot=%s version=%s", self.config.collection, template_id, snapshot["id"], version)
         return snapshot
 
+    def unpublish(self, template_id: str, changed_by: Optional[str] = None, reason: Optional[str] = "unpublish_template") -> Dict[str, Any]:
+        current = self.get(template_id)
+        if current["templateStatus"] == "unpublished":
+            return current
+
+        current["templateStatus"] = "unpublished"
+        current["updatedAt"] = utc_now_iso()
+        append_status_history(current, "templateStatus", changed_by, reason)
+        current = normalize_document(current, "templateStatus")
+        logger.info("Template unpublished | collection=%s id=%s", self.config.collection, template_id)
+        return self.repository.replace_document(
+            self.config.collection,
+            template_id,
+            current,
+            self.config.not_found_message,
+            self.config.not_found_code,
+            self.config.duplicate_message,
+        )
+
     def list_public(
         self,
         limit: int = 20,
