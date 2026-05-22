@@ -53,6 +53,7 @@ class PaymentService:
     def create_checkout(self, payload) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
+        project_service._validate_ready_for_pending_payment(project)
 
         amount = float((project.get("metadata") or {}).get("basePrice") or 0)
         if amount <= 0:

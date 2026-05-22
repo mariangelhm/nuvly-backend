@@ -112,11 +112,20 @@ def _create_customer_project(repository: InMemoryDomainRepository) -> Dict[str, 
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
     created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
     template_service.publish(created["id"])
-    return customer_service.create_from_template(
+    project = customer_service.create_from_template(
         CustomerProjectCreate(
             templateId=created["id"],
             customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
         )
+    )
+    project["publicSlug"] = "buildframe-lara"
+    return repository.replace_document(
+        CUSTOMER_WEBSITE_CONFIG.collection,
+        project["id"],
+        project,
+        CUSTOMER_WEBSITE_CONFIG.not_found_message,
+        CUSTOMER_WEBSITE_CONFIG.not_found_code,
+        CUSTOMER_WEBSITE_CONFIG.duplicate_message,
     )
 
 

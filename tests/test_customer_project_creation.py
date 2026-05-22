@@ -143,8 +143,71 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
     assert project["customerStatus"] == "draft"
     assert project["payment"]["status"] == "unpaid"
     assert project["statusHistory"][0]["status"] == "draft"
+    assert project["publicSlug"] is None
     assert project["styles"] == published_snapshot["snapshot"]["styles"]
     assert project["layout"] == published_snapshot["snapshot"]["layout"]
     assert project["blocks"] == published_snapshot["snapshot"]["blocks"]
     assert project["seo"] == published_snapshot["snapshot"]["seo"]
     assert project["metadata"] == published_snapshot["snapshot"]["metadata"]
+
+
+def test_update_customer_project_generates_public_slug_from_title() -> None:
+    repository = InMemoryDomainRepository()
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    updated = customer_service.update(
+        project["id"],
+        type(
+            "Payload",
+            (),
+            {
+                "model_dump": lambda self, mode="json", exclude_none=True: {
+                    "title": "Mi Sitio Final",
+                    "styles": project["styles"],
+                    "layout": project["layout"],
+                    "blocks": project["blocks"],
+                    "seo": project["seo"],
+                    "metadata": project["metadata"],
+                    "websiteData": project["websiteData"],
+                    "customerData": project["customerData"],
+                    "leadForms": project["leadForms"],
+                    "formSubmissions": project["formSubmissions"],
+                    "customDomain": project["customDomain"],
+                }
+            },
+        )(),
+    )
+
+    assert updated["publicSlug"] == "mi-sitio-final"
+
+
+def test_pending_payment_requires_title_and_public_slug() -> None:
+    repository = InMemoryDomainRepository()
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    try:
+        customer_service.update_status(project["id"], "pending_payment", None, None)
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "PUBLIC_SLUG_REQUIRED"
+    else:
+        raise AssertionError("Expected PUBLIC_SLUG_REQUIRED")

@@ -56,10 +56,22 @@ def create_indexes() -> None:
     db.website_templates.create_index([("metadata.catalogVisible", ASCENDING)])
     _drop_index_if_exists(db.customer_invitations, "slug_1")
     _drop_index_if_exists(db.customer_websites, "slug_1")
+    _drop_index_if_exists(db.customer_invitations, "publicSlug_1")
+    _drop_index_if_exists(db.customer_websites, "publicSlug_1")
     db.customer_invitations.create_index([("slug", ASCENDING)])
+    db.customer_invitations.create_index(
+        [("publicSlug", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"publicSlug": {"$type": "string"}},
+    )
     db.customer_invitations.create_index([("customerStatus", ASCENDING)])
     db.customer_invitations.create_index([("updatedAt", ASCENDING)])
     db.customer_websites.create_index([("slug", ASCENDING)])
+    db.customer_websites.create_index(
+        [("publicSlug", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"publicSlug": {"$type": "string"}},
+    )
     db.customer_websites.create_index([("customerStatus", ASCENDING)])
     db.customer_websites.create_index([("updatedAt", ASCENDING)])
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING)])

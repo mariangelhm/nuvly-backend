@@ -6,12 +6,17 @@ from app.modules.domain.schemas import PublicTemplateCardResponse, SnapshotRespo
 from app.modules.domain.services import (
     INVITATION_TEMPLATE_CONFIG,
     WEBSITE_TEMPLATE_CONFIG,
+    CUSTOMER_INVITATION_CONFIG,
+    CUSTOMER_WEBSITE_CONFIG,
+    CustomerProjectService,
     TemplateService,
 )
 
 router = APIRouter(prefix="/public", tags=["public"])
 invitation_service = TemplateService(INVITATION_TEMPLATE_CONFIG)
 website_service = TemplateService(WEBSITE_TEMPLATE_CONFIG)
+customer_invitation_service = CustomerProjectService(CUSTOMER_INVITATION_CONFIG)
+customer_website_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG)
 
 
 def parse_csv(value: Optional[str]) -> list[str] | None:
@@ -53,3 +58,13 @@ def list_public_website_templates(
 @router.get("/website-templates/{slug}", response_model=SnapshotResponse)
 def get_public_website_template(slug: str):
     return website_service.get_public_by_slug(slug)
+
+
+@router.get("/invitations/{publicSlug}", response_model=SnapshotResponse)
+def get_public_customer_invitation(publicSlug: str):
+    return customer_invitation_service.get_published_by_slug(publicSlug)
+
+
+@router.get("/websites/{publicSlug}", response_model=SnapshotResponse)
+def get_public_customer_website(publicSlug: str):
+    return customer_website_service.get_published_by_slug(publicSlug)

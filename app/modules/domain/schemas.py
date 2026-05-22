@@ -202,7 +202,8 @@ class CustomerProjectCreate(BaseModel):
 
 class CustomerInvitationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
-    slug: str = Field(min_length=1, max_length=160)
+    slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
     styles: Styles = Field(default_factory=Styles)
     layout: Layout = Field(default_factory=Layout)
     blocks: List[ExperienceBlock] = Field(default_factory=list)
@@ -217,7 +218,8 @@ class CustomerInvitationUpdate(BaseModel):
 
 class CustomerWebsiteUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
-    slug: str = Field(min_length=1, max_length=160)
+    slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
     styles: Styles = Field(default_factory=Styles)
     layout: Layout = Field(default_factory=Layout)
     blocks: List[ExperienceBlock] = Field(default_factory=list)

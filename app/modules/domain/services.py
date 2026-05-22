@@ -1,4 +1,5 @@
 import logging
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,7 @@ from app.modules.domain.repository import DomainRepository
 from app.modules.experiences.utils import new_id, slugify, utc_now_iso
 
 logger = logging.getLogger(__name__)
+PUBLIC_SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
 
 @dataclass(frozen=True)
@@ -443,6 +445,7 @@ class CustomerProjectService:
             "customerData": payload.customerData.model_dump(mode="json"),
             "customerStatus": "draft",
             "payment": default_payment(),
+            "publicSlug": None,
             "statusHistory": [],
             "publishedSnapshotId": None,
             "lastPublishedAt": None,
@@ -462,6 +465,38 @@ class CustomerProjectService:
         logger.info("Customer project created | collection=%s id=%s template=%s", self.config.collection, document["id"], template["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
 
+    def _normalize_public_slug(self, public_slug: str | None, title: str | None) -> str | None:
+        if public_slug is None:
+            if title is None:
+                return None
+            generated = slugify(title)
+            return generated or None
+
+        normalized = public_slug.strip()
+        if not normalized:
+            return None
+        if len(normalized) < 3:
+            raise NuvlyError("publicSlug debe tener al menos 3 caracteres.", 400, "INVALID_PUBLIC_SLUG")
+        if not PUBLIC_SLUG_PATTERN.fullmatch(normalized):
+            raise NuvlyError("publicSlug solo puede contener minusculas, numeros y guiones.", 400, "INVALID_PUBLIC_SLUG")
+        return normalized
+
+    def _ensure_public_slug_available(self, public_slug: str, current_id: str | None = None) -> None:
+        existing = self.repository.find_document(self.config.collection, {"publicSlug": public_slug})
+        if existing and existing.get("id") != current_id:
+            raise NuvlyError("El publicSlug ya existe para otro proyecto.", 409, "PUBLIC_SLUG_ALREADY_EXISTS")
+
+    def _validate_ready_for_pending_payment(self, document: Dict[str, Any]) -> None:
+        title = (document.get("title") or "").strip()
+        if not title:
+            raise NuvlyError("El titulo es obligatorio antes de continuar al pago.", 400, "TITLE_REQUIRED")
+
+        public_slug = document.get("publicSlug")
+        if not public_slug:
+            raise NuvlyError("El publicSlug es obligatorio antes de continuar al pago.", 400, "PUBLIC_SLUG_REQUIRED")
+
+        self._ensure_public_slug_available(public_slug, current_id=document.get("id"))
+
     def get(self, project_id: str) -> Dict[str, Any]:
         document = self.repository.find_document(self.config.collection, {"id": project_id})
         if not document:
@@ -471,12 +506,18 @@ class CustomerProjectService:
     def update(self, project_id: str, payload) -> Dict[str, Any]:
         current = self.get(project_id)
         now = utc_now_iso()
-        document = payload.model_dump(mode="json")
+        document = payload.model_dump(mode="json", exclude_none=True)
+        public_slug = self._normalize_public_slug(document.get("publicSlug"), document.get("title"))
+        if not document.get("slug"):
+            document["slug"] = current["slug"]
+        if public_slug:
+            self._ensure_public_slug_available(public_slug, current_id=project_id)
         document.update(
             {
                 "id": current["id"],
                 "templateId": current["templateId"],
                 "templateSnapshotId": current["templateSnapshotId"],
+                "publicSlug": public_slug,
                 "customerStatus": current["customerStatus"],
                 "payment": current.get("payment", default_payment()),
                 "statusHistory": current.get("statusHistory", []),
@@ -505,6 +546,8 @@ class CustomerProjectService:
         current = self.get(project_id)
         if current["customerStatus"] == customer_status:
             return current
+        if customer_status == "pending_payment":
+            self._validate_ready_for_pending_payment(current)
         current["customerStatus"] = customer_status
         current["updatedAt"] = utc_now_iso()
         append_status_history(current, "customerStatus", changed_by, reason)
@@ -521,6 +564,7 @@ class CustomerProjectService:
 
     def publish(self, project_id: str, changed_by: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
         current = self.get(project_id)
+        self._validate_ready_for_pending_payment(current)
         now = utc_now_iso()
         document = deepcopy(current)
         if document["customerStatus"] != "published":
@@ -536,6 +580,7 @@ class CustomerProjectService:
             "sourceType": self.config.source_type,
             "version": version,
             "slug": document["slug"],
+            "publicSlug": document["publicSlug"],
             "snapshot": self._build_snapshot_payload(document, version, now),
             "createdAt": now,
             "publishedAt": now,
@@ -560,34 +605,27 @@ class CustomerProjectService:
         return snapshot
 
     def get_published_by_slug(self, slug: str) -> Dict[str, Any]:
-        normalized_slug = slugify(slug)
-        snapshots = self.repository.find_documents(
-            self.config.snapshot_collection,
-            {"slug": normalized_slug},
-            limit=50,
-            skip=0,
-            sort_field="publishedAt",
-        )
-        for snapshot in snapshots:
-            document = self.repository.find_document(
-                self.config.collection,
-                {
-                    "id": snapshot["sourceId"],
-                    "customerStatus": "published",
-                    "publishedSnapshotId": snapshot["id"],
-                },
-            )
-            if document:
-                return snapshot
-        if not snapshots:
+        normalized_slug = self._normalize_public_slug(slugify(slug), None)
+        if not normalized_slug:
             raise NuvlyError("Experiencia publicada no encontrada.", 404, "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
-        raise NuvlyError("El slug solicitado no corresponde al snapshot publicado vigente.", 404, "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
+        document = self.repository.find_document(
+            self.config.collection,
+            {"publicSlug": normalized_slug, "customerStatus": "published"},
+        )
+        if not document:
+            raise NuvlyError("Experiencia publicada no encontrada.", 404, "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
+        snapshot = self.repository.find_document(
+            self.config.snapshot_collection,
+            {"id": document.get("publishedSnapshotId")},
+        )
+        return ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
 
     def _build_snapshot_payload(self, document: Dict[str, Any], version: int, now: str) -> Dict[str, Any]:
         payload = {
             "id": document["id"],
             "title": document["title"],
             "slug": document["slug"],
+            "publicSlug": document.get("publicSlug"),
             "customerStatus": "published",
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
