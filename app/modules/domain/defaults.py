@@ -1,6 +1,26 @@
 from copy import deepcopy
 
 
+def default_main_page(title: str = "Pagina principal", blocks: list[dict] | None = None) -> dict:
+    return {
+        "id": "main",
+        "kind": "primary",
+        "title": title,
+        "slug": "",
+        "path": "/",
+        "parentPageId": None,
+        "source": {
+            "blockId": None,
+            "blockType": None,
+            "sourceItemIndex": None,
+            "sourceChildKey": None,
+        },
+        "seo": {},
+        "settings": {},
+        "blocks": deepcopy(blocks or []),
+    }
+
+
 def default_metadata(entity_kind: str) -> dict:
     base = {
         "category": "invitation" if entity_kind == "invitation" else "landing",
@@ -16,6 +36,7 @@ def default_metadata(entity_kind: str) -> dict:
         "catalogVisible": False,
         "previewVariant": "",
         "previewStyle": {},
+        "linkedPages": [],
     }
     return deepcopy(base)
 
@@ -95,6 +116,7 @@ def default_template_document(entity_kind: str, title: str, slug: str, now: str,
         },
         "layout": {"sectionOrder": []},
         "blocks": [],
+        "pages": [default_main_page(title)],
         "seo": {
             "title": title,
             "description": "",

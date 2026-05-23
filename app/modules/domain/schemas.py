@@ -127,6 +127,7 @@ class InvitationTemplateCreate(BaseModel):
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
+    pages: Optional[List[Dict[str, Any]]] = None
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
@@ -140,6 +141,7 @@ class WebsiteTemplateCreate(BaseModel):
     styles: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     blocks: Optional[List[WebsiteBlock]] = None
+    pages: Optional[List[Dict[str, Any]]] = None
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(extra="allow")
@@ -151,6 +153,7 @@ class InvitationTemplateUpdate(BaseModel):
     styles: Styles = Field(default_factory=Styles)
     layout: Layout = Field(default_factory=Layout)
     blocks: List[ExperienceBlock] = Field(default_factory=list)
+    pages: List[Dict[str, Any]] = Field(default_factory=list)
     seo: Seo = Field(default_factory=Seo)
     metadata: Metadata = Field(default_factory=Metadata)
     invitationData: InvitationData = Field(default_factory=InvitationData)
@@ -163,6 +166,7 @@ class WebsiteTemplateUpdate(BaseModel):
     styles: Dict[str, Any] = Field(default_factory=dict)
     layout: Dict[str, Any] = Field(default_factory=dict)
     blocks: List[WebsiteBlock] = Field(default_factory=list)
+    pages: List[Dict[str, Any]] = Field(default_factory=list)
     seo: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     model_config = ConfigDict(extra="allow")
@@ -207,6 +211,7 @@ class CustomerInvitationUpdate(BaseModel):
     styles: Styles = Field(default_factory=Styles)
     layout: Layout = Field(default_factory=Layout)
     blocks: List[ExperienceBlock] = Field(default_factory=list)
+    pages: List[Dict[str, Any]] = Field(default_factory=list)
     seo: Seo = Field(default_factory=Seo)
     metadata: Metadata = Field(default_factory=Metadata)
     invitationData: InvitationData = Field(default_factory=InvitationData)
@@ -223,6 +228,7 @@ class CustomerWebsiteUpdate(BaseModel):
     styles: Styles = Field(default_factory=Styles)
     layout: Layout = Field(default_factory=Layout)
     blocks: List[ExperienceBlock] = Field(default_factory=list)
+    pages: List[Dict[str, Any]] = Field(default_factory=list)
     seo: Seo = Field(default_factory=Seo)
     metadata: Metadata = Field(default_factory=Metadata)
     websiteData: WebsiteData = Field(default_factory=WebsiteData)

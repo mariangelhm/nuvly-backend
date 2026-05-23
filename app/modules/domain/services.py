@@ -169,6 +169,8 @@ class TemplateService:
         )
         for key, value in payload_data.items():
             document[key] = value
+        if "pages" not in payload_data:
+            document.pop("pages", None)
         if self.config.data_field not in payload_data:
             document.pop(self.config.data_field, None)
         document["updatedAt"] = now
@@ -376,6 +378,7 @@ class TemplateService:
                 },
             )
             if document:
+                snapshot["snapshot"] = normalize_document(snapshot["snapshot"], "templateStatus")
                 return snapshot
         if not snapshots:
             raise NuvlyError("Template publico no encontrado.", 404, "PUBLIC_TEMPLATE_NOT_FOUND")
@@ -391,6 +394,7 @@ class TemplateService:
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
             "blocks": deepcopy(document.get("blocks", [])),
+            "pages": deepcopy(document.get("pages", [])),
             "seo": deepcopy(document.get("seo", {})),
             "metadata": deepcopy(document.get("metadata", {})),
             "version": version,
@@ -429,7 +433,7 @@ class TemplateService:
     def _prepare_template_response(self, document: Dict[str, Any]) -> Dict[str, Any]:
         prepared = deepcopy(document)
         prepared["experienceType"] = self.config.experience_type
-        return prepared
+        return normalize_document(prepared, "templateStatus")
 
 
 class CustomerProjectService:
@@ -457,6 +461,7 @@ class CustomerProjectService:
             "styles": deepcopy(base_snapshot.get("styles", {})),
             "layout": deepcopy(base_snapshot.get("layout", {})),
             "blocks": deepcopy(base_snapshot.get("blocks", [])),
+            "pages": deepcopy(base_snapshot.get("pages")),
             "seo": deepcopy(base_snapshot.get("seo", {})),
             "metadata": deepcopy(base_snapshot.get("metadata", {})),
             "templateId": template["id"],
@@ -520,7 +525,7 @@ class CustomerProjectService:
         document = self.repository.find_document(self.config.collection, {"id": project_id})
         if not document:
             raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
-        return document
+        return normalize_document(document, "customerStatus")
 
     def update(self, project_id: str, payload) -> Dict[str, Any]:
         current = self.get(project_id)
@@ -637,7 +642,9 @@ class CustomerProjectService:
             self.config.snapshot_collection,
             {"id": document.get("publishedSnapshotId")},
         )
-        return ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
+        ensured = ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
+        ensured["snapshot"] = normalize_document(ensured["snapshot"], "customerStatus")
+        return ensured
 
     def _build_snapshot_payload(self, document: Dict[str, Any], version: int, now: str) -> Dict[str, Any]:
         payload = {
@@ -649,6 +656,7 @@ class CustomerProjectService:
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
             "blocks": deepcopy(document.get("blocks", [])),
+            "pages": deepcopy(document.get("pages", [])),
             "seo": deepcopy(document.get("seo", {})),
             "metadata": deepcopy(document.get("metadata", {})),
             "templateId": document["templateId"],

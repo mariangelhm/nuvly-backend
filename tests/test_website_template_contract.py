@@ -128,6 +128,18 @@ def _build_full_website_payload() -> Dict[str, Any]:
             }
         )
 
+    linked_page_blocks = [
+        {
+            "id": "blk_linked_intro",
+            "type": "content",
+            "variant": "content-variant-b",
+            "enabled": True,
+            "order": 1,
+            "props": {"headline": "Detalle del servicio"},
+            "settings": {},
+        }
+    ]
+
     return {
         "title": "Studio Contract Template",
         "slug": "studio-contract-template",
@@ -153,7 +165,42 @@ def _build_full_website_payload() -> Dict[str, Any]:
             "sectionOrder": [block["id"] for block in blocks],
             "canvas": {"maxWidth": 1280, "gutter": 24},
         },
-        "blocks": blocks,
+        "pages": [
+            {
+                "id": "main",
+                "kind": "primary",
+                "title": "Web Principal",
+                "slug": "",
+                "path": "/",
+                "parentPageId": None,
+                "source": {
+                    "blockId": None,
+                    "blockType": None,
+                    "sourceItemIndex": None,
+                    "sourceChildKey": None,
+                },
+                "seo": {},
+                "settings": {},
+                "blocks": blocks,
+            },
+            {
+                "id": "navigation_services::nav-0::overview",
+                "kind": "linked",
+                "title": "Servicios overview",
+                "slug": "servicios-overview",
+                "path": "/servicios-overview",
+                "parentPageId": "main",
+                "source": {
+                    "blockId": "blk_navigation",
+                    "blockType": "navigation",
+                    "sourceItemIndex": 0,
+                    "sourceChildKey": "overview",
+                },
+                "seo": {"title": "Servicios overview"},
+                "settings": {"enabled": True, "tier": "pro"},
+                "blocks": linked_page_blocks,
+            },
+        ],
         "seo": {
             "title": "Studio Contract Template",
             "description": "Website template round-trip contract.",
@@ -189,7 +236,10 @@ def _assert_contract_subset(document: Dict[str, Any]) -> None:
     assert document["templateStatus"] == "draft"
     assert document["status"] == "draft"
     assert document["layout"]["sectionOrder"] == [block["id"] for block in document["blocks"]]
+    assert document["pages"][0]["id"] == "main"
+    assert document["pages"][1]["path"] == "/servicios-overview"
     assert document["metadata"]["previewVariant"] == "desktop"
+    assert document["metadata"]["linkedPages"][0]["id"] == "navigation_services::nav-0::overview"
     assert document["blocks"][0]["label"] == "Navigation"
     assert document["blocks"][0]["category"] == "marketing"
     assert document["blocks"][0]["description"] == "Block navigation description"
@@ -243,3 +293,20 @@ def test_website_template_preserves_website_data_when_front_persists_it() -> Non
     response = _response_json(service.get(created["id"]))
 
     assert response["websiteData"] == payload["websiteData"]
+
+
+def test_website_template_legacy_blocks_are_exposed_as_pages() -> None:
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    payload = _build_full_website_payload()
+    legacy_blocks = deepcopy(payload["pages"][0]["blocks"])
+    payload.pop("pages")
+    payload["blocks"] = legacy_blocks
+
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+    response = _response_json(service.get(created["id"]))
+    snapshot = service.publish(created["id"])
+
+    assert response["pages"][0]["id"] == "main"
+    assert response["pages"][0]["blocks"] == legacy_blocks
+    assert response["metadata"]["linkedPages"] == []
+    assert snapshot["snapshot"]["pages"][0]["blocks"] == legacy_blocks

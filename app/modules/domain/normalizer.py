@@ -2,6 +2,7 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 from app.core.errors import NuvlyError
+from app.modules.domain.defaults import default_main_page
 from app.modules.experiences.registry import BLOCK_REGISTRY
 from app.modules.experiences.utils import slugify
 
@@ -51,17 +52,13 @@ def validate_block(block: Dict[str, Any]) -> None:
     # TODO: Cuando exista block registry compartido frontend/backend, reactivar validacion estricta de variantes.
 
 
-def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:
-    normalized = deepcopy(document)
-    normalized["slug"] = slugify(normalized.get("slug") or normalized.get("title", ""))
-
-    blocks_value = normalized.get("blocks")
+def _normalize_blocks(blocks_value: Any) -> List[Dict[str, Any]]:
     if blocks_value is None:
-        blocks: List[Dict[str, Any]] = []
-    elif not isinstance(blocks_value, list):
+        return []
+    if not isinstance(blocks_value, list):
         raise NuvlyError("blocks debe ser una lista.", 422, "INVALID_BLOCKS")
-    else:
-        blocks = blocks_value
+
+    blocks = blocks_value
     seen_ids: set[str] = set()
     singleton_seen: set[str] = set()
 
@@ -81,6 +78,143 @@ def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str,
                 )
             singleton_seen.add(block_type)
 
+    for index, block in enumerate(blocks, start=1):
+        block["order"] = index
+
+    return blocks
+
+
+def _legacy_linked_pages(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+    linked_pages = metadata.get("linkedPages")
+    if linked_pages is None:
+        return []
+    if not isinstance(linked_pages, list):
+        raise NuvlyError("metadata.linkedPages debe ser una lista.", 422, "INVALID_LINKED_PAGES")
+    normalized_pages: List[Dict[str, Any]] = []
+    for index, page in enumerate(linked_pages, start=1):
+        if not isinstance(page, dict):
+            raise NuvlyError("Cada linkedPage debe ser un objeto.", 422, "INVALID_LINKED_PAGE")
+        normalized_page = deepcopy(page)
+        normalized_page.setdefault("id", f"linked-{index}")
+        normalized_page.setdefault("kind", "linked")
+        normalized_page.setdefault("title", f"Subpagina {index}")
+        normalized_page.setdefault("slug", slugify(normalized_page.get("title", "")))
+        normalized_page.setdefault("path", f"/{normalized_page['slug']}" if normalized_page["slug"] else f"/linked-{index}")
+        normalized_page.setdefault("parentPageId", "main")
+        normalized_page.setdefault(
+            "source",
+            {
+                "blockId": None,
+                "blockType": None,
+                "sourceItemIndex": None,
+                "sourceChildKey": None,
+            },
+        )
+        normalized_page.setdefault("seo", {})
+        normalized_page.setdefault("settings", {})
+        normalized_page["blocks"] = _normalize_blocks(normalized_page.get("blocks"))
+        normalized_pages.append(normalized_page)
+    return normalized_pages
+
+
+def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    metadata = document.get("metadata") or {}
+    pages_value = document.get("pages")
+
+    if pages_value is None:
+        primary_title = document.get("title") or "Pagina principal"
+        legacy_pages = [default_main_page(primary_title, document.get("blocks"))]
+        legacy_pages.extend(_legacy_linked_pages(metadata))
+        return legacy_pages
+
+    if not isinstance(pages_value, list):
+        raise NuvlyError("pages debe ser una lista.", 422, "INVALID_PAGES")
+
+    pages = pages_value
+    if not pages:
+        return [default_main_page(document.get("title") or "Pagina principal")]
+
+    seen_page_ids: set[str] = set()
+    primary_count = 0
+    for page in pages:
+        if not isinstance(page, dict):
+            raise NuvlyError("Cada page debe ser un objeto.", 422, "INVALID_PAGE")
+        page_id = page.get("id")
+        if not isinstance(page_id, str) or not page_id.strip():
+            raise NuvlyError("Cada page debe tener id no vacio.", 422, "INVALID_PAGE_ID")
+        if page_id in seen_page_ids:
+            raise NuvlyError(f"Pagina duplicada por id: {page_id}", 422, "DUPLICATED_PAGE_ID")
+        seen_page_ids.add(page_id)
+
+        page_kind = page.get("kind")
+        if not isinstance(page_kind, str) or not page_kind.strip():
+            raise NuvlyError("Cada page debe tener kind no vacio.", 422, "INVALID_PAGE_KIND")
+        if page_kind == "primary":
+            primary_count += 1
+
+        page_title = page.get("title")
+        if not isinstance(page_title, str) or not page_title.strip():
+            raise NuvlyError("Cada page debe tener title no vacio.", 422, "INVALID_PAGE_TITLE")
+
+        page_slug = page.get("slug", "")
+        if not isinstance(page_slug, str):
+            raise NuvlyError("Cada page debe tener slug string.", 422, "INVALID_PAGE_SLUG")
+        if page_kind != "primary":
+            page["slug"] = slugify(page_slug or page_title)
+        else:
+            page["slug"] = slugify(page_slug) if page_slug else ""
+
+        page_path = page.get("path")
+        if not isinstance(page_path, str) or not page_path.strip():
+            raise NuvlyError("Cada page debe tener path no vacio.", 422, "INVALID_PAGE_PATH")
+
+        parent_page_id = page.get("parentPageId")
+        if parent_page_id is not None and (not isinstance(parent_page_id, str) or not parent_page_id.strip()):
+            raise NuvlyError("parentPageId debe ser string o null.", 422, "INVALID_PARENT_PAGE_ID")
+
+        source = page.get("source") or {}
+        if not isinstance(source, dict):
+            raise NuvlyError("page.source debe ser un objeto.", 422, "INVALID_PAGE_SOURCE")
+        page["source"] = source
+
+        seo = page.get("seo") or {}
+        if not isinstance(seo, dict):
+            raise NuvlyError("page.seo debe ser un objeto.", 422, "INVALID_PAGE_SEO")
+        page["seo"] = seo
+
+        settings = page.get("settings") or {}
+        if not isinstance(settings, dict):
+            raise NuvlyError("page.settings debe ser un objeto.", 422, "INVALID_PAGE_SETTINGS")
+        page["settings"] = settings
+        page["blocks"] = _normalize_blocks(page.get("blocks"))
+
+    if primary_count != 1:
+        raise NuvlyError("Debe existir exactamente una page primaria.", 422, "INVALID_PRIMARY_PAGE_COUNT")
+
+    return pages
+
+
+def _sync_pages_and_legacy_fields(normalized: Dict[str, Any], pages: List[Dict[str, Any]]) -> None:
+    primary_page = next((page for page in pages if page.get("kind") == "primary"), None)
+    if primary_page is None:
+        raise NuvlyError("No se encontro la pagina principal.", 422, "PRIMARY_PAGE_NOT_FOUND")
+
+    primary_blocks = primary_page.get("blocks", [])
+    normalized["blocks"] = primary_blocks
+    normalized["pages"] = pages
+
+    normalized["metadata"] = normalized.get("metadata") or {}
+    normalized["metadata"]["linkedPages"] = [deepcopy(page) for page in pages if page.get("kind") != "primary"]
+
+
+def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:
+    normalized = deepcopy(document)
+    normalized["slug"] = slugify(normalized.get("slug") or normalized.get("title", ""))
+    normalized["metadata"] = normalized.get("metadata") or {}
+    pages = _normalize_pages(normalized)
+    _sync_pages_and_legacy_fields(normalized, pages)
+
+    blocks = normalized["blocks"]
     block_ids = [block["id"] for block in blocks]
     layout_value = normalized.get("layout")
     if layout_value is None:
@@ -97,10 +231,6 @@ def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str,
             "INCONSISTENT_SECTION_ORDER",
         )
 
-    for index, block in enumerate(blocks, start=1):
-        block["order"] = index
-
-    normalized["blocks"] = blocks
     normalized["layout"] = normalized.get("layout") or {}
     normalized["layout"]["sectionOrder"] = block_ids
     normalized["seo"] = normalized.get("seo") or {}
@@ -108,8 +238,8 @@ def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str,
     status = normalized.get(status_field)
     normalized["seo"]["noIndex"] = status in NON_INDEXABLE_STATUSES
 
-    normalized["metadata"] = normalized.get("metadata") or {}
     normalized["metadata"].setdefault("catalogVisible", False)
     normalized["metadata"].setdefault("tags", [])
+    normalized["metadata"].setdefault("linkedPages", [])
 
     return normalized

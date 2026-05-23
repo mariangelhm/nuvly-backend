@@ -97,13 +97,49 @@ class InMemoryDomainRepository:
 
 
 def _website_payload() -> Dict[str, Any]:
+    root_blocks = [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {"headline": "Hola"}, "settings": {}}]
     return {
         "title": "Buildframe",
         "slug": "buildframe",
         "experienceType": "web",
         "styles": {"themeId": "sunrise", "colors": {"accent": "#4a6cf7"}},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {"headline": "Hola"}, "settings": {}}],
+        "pages": [
+            {
+                "id": "main",
+                "kind": "primary",
+                "title": "Web principal",
+                "slug": "",
+                "path": "/",
+                "parentPageId": None,
+                "source": {
+                    "blockId": None,
+                    "blockType": None,
+                    "sourceItemIndex": None,
+                    "sourceChildKey": None,
+                },
+                "seo": {},
+                "settings": {},
+                "blocks": root_blocks,
+            },
+            {
+                "id": "blk_hero::details",
+                "kind": "linked",
+                "title": "Hero details",
+                "slug": "hero-details",
+                "path": "/hero-details",
+                "parentPageId": "main",
+                "source": {
+                    "blockId": "blk_hero",
+                    "blockType": "hero",
+                    "sourceItemIndex": None,
+                    "sourceChildKey": "details",
+                },
+                "seo": {},
+                "settings": {"enabled": True},
+                "blocks": [],
+            },
+        ],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
         "metadata": {"category": "landing", "coverImage": "/assets/cover.jpg", "tags": ["agency"]},
         "websiteData": {"industry": "creative-services", "businessName": "Buildframe"},
@@ -147,6 +183,7 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
     assert project["styles"] == published_snapshot["snapshot"]["styles"]
     assert project["layout"] == published_snapshot["snapshot"]["layout"]
     assert project["blocks"] == published_snapshot["snapshot"]["blocks"]
+    assert project["pages"] == published_snapshot["snapshot"]["pages"]
     assert project["seo"] == published_snapshot["snapshot"]["seo"]
     assert project["metadata"] == published_snapshot["snapshot"]["metadata"]
 
