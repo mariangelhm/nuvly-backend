@@ -16,6 +16,7 @@ PLANS_COLLECTION = "pricing_plans"
 COMPONENTS_COLLECTION = "pricing_components"
 VALID_PLAN_TIERS = {"essential", "plus", "pro", "custom"}
 VALID_PRODUCT_TYPES = {"website", "invitation"}
+SUMMARY_PLAN_TIERS = ("essential", "plus", "pro", "custom")
 
 
 def _normalize_plan_document(document: Dict[str, Any]) -> Dict[str, Any]:
@@ -270,6 +271,74 @@ class PricingComponentService:
             )
             stats.insertedComponents += 1
         return stats
+
+
+class PricingSummaryService:
+    def __init__(self, repository: PricingRepository | None = None):
+        self.repository = repository or PricingRepository()
+        self.plan_service = PricingPlanService(repository=self.repository)
+        self.component_service = PricingComponentService(repository=self.repository)
+
+    @staticmethod
+    def _build_matrix_cell(component: Dict[str, Any], tier: str) -> Dict[str, Any]:
+        if tier in component.get("includedInPlans", []):
+            return {"status": "included", "label": "Incluido", "extraPrice": None}
+        if tier in component.get("canBeExtraInPlans", []):
+            extra_price = component.get("extraPrice", 0)
+            return {"status": "extra", "label": f"Extra ${extra_price}", "extraPrice": extra_price}
+        return {"status": "blocked", "label": "No disponible", "extraPrice": None}
+
+    def build_summary(self, product_type: str, include_inactive: bool = False) -> Dict[str, Any]:
+        plans = self.plan_service.list(product_type=product_type)
+        components = self.component_service.list(product_type=product_type, active=None if include_inactive else True)
+
+        tier_counters: Dict[str, Dict[str, int]] = {
+            plan["tier"]: {"included": 0, "extra": 0, "blocked": 0}
+            for plan in plans
+        }
+        summary_components: List[Dict[str, Any]] = []
+
+        for component in components:
+            variants = component.get("variants", [])
+            matrix: Dict[str, Dict[str, Any]] = {}
+            for plan in plans:
+                cell = self._build_matrix_cell(component, plan["tier"])
+                matrix[plan["tier"]] = cell
+                tier_counters[plan["tier"]][cell["status"]] += 1
+
+            summary_components.append(
+                {
+                    "id": component["id"],
+                    "componentCode": component["componentCode"],
+                    "name": component.get("name", ""),
+                    "description": component.get("description", ""),
+                    "active": component.get("active", True),
+                    "variantsCount": len(variants),
+                    "activeVariantsCount": len([variant for variant in variants if variant.get("active") is True]),
+                    "matrix": {tier: matrix[tier] for tier in SUMMARY_PLAN_TIERS if tier in matrix},
+                }
+            )
+
+        summary_plans = [
+            {
+                "id": plan["id"],
+                "code": plan["code"],
+                "tier": plan["tier"],
+                "name": plan["name"],
+                "basePrice": plan["basePrice"],
+                "currency": plan["currency"],
+                "includedCount": tier_counters[plan["tier"]]["included"],
+                "extraCount": tier_counters[plan["tier"]]["extra"],
+                "blockedCount": tier_counters[plan["tier"]]["blocked"],
+            }
+            for plan in plans
+        ]
+
+        return {
+            "productType": product_type,
+            "plans": summary_plans,
+            "components": summary_components,
+        }
 
 
 def ensure_pricing_seed(repository: PricingRepository | None = None) -> PricingSeedStats:

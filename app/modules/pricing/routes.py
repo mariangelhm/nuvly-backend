@@ -11,16 +11,18 @@ from app.modules.pricing.schemas import (
     PricingPlanResponse,
     PricingPlanUpdate,
     PricingSeedStats,
+    PricingSummaryResponse,
     PricingVariantActiveUpdate,
     ProductType,
 )
-from app.modules.pricing.service import PricingComponentService, PricingPlanService, ensure_pricing_seed
+from app.modules.pricing.service import PricingComponentService, PricingPlanService, PricingSummaryService, ensure_pricing_seed
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 admin_router = APIRouter(prefix="/admin/pricing", tags=["admin-pricing"])
 
 plan_service = PricingPlanService()
 component_service = PricingComponentService()
+summary_service = PricingSummaryService()
 
 
 @router.get("/plans", response_model=list[PricingPlanResponse])
@@ -63,6 +65,14 @@ def list_pricing_components(
 @router.get("/components/{component_id}", response_model=PricingComponentResponse)
 def get_pricing_component(component_id: str):
     return component_service.get(component_id)
+
+
+@router.get("/summary", response_model=PricingSummaryResponse)
+def get_pricing_summary(
+    productType: ProductType = Query(...),
+    includeInactive: bool = Query(default=False),
+):
+    return summary_service.build_summary(product_type=productType, include_inactive=includeInactive)
 
 
 @admin_router.post("/components", response_model=PricingComponentResponse, status_code=201)

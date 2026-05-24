@@ -91,6 +91,41 @@ class PricingCatalogSummary(BaseModel):
     components: List[PricingComponentResponse] = Field(default_factory=list)
 
 
+class PricingSummaryMatrixCell(BaseModel):
+    status: Literal["included", "extra", "blocked"]
+    label: str
+    extraPrice: Optional[int] = None
+
+
+class PricingSummaryPlan(BaseModel):
+    id: str
+    code: str
+    tier: PlanTier
+    name: str
+    basePrice: int
+    currency: CurrencyCode
+    includedCount: int
+    extraCount: int
+    blockedCount: int
+
+
+class PricingSummaryComponent(BaseModel):
+    id: str
+    componentCode: str
+    name: str
+    description: str
+    active: bool
+    variantsCount: int
+    activeVariantsCount: int
+    matrix: Dict[str, PricingSummaryMatrixCell] = Field(default_factory=dict)
+
+
+class PricingSummaryResponse(BaseModel):
+    productType: ProductType
+    plans: List[PricingSummaryPlan] = Field(default_factory=list)
+    components: List[PricingSummaryComponent] = Field(default_factory=list)
+
+
 class PricingSeedStats(BaseModel):
     insertedPlans: int = 0
     insertedComponents: int = 0

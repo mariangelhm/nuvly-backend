@@ -16,6 +16,7 @@ from app.modules.pricing.service import (
     PLANS_COLLECTION,
     PricingComponentService,
     PricingPlanService,
+    PricingSummaryService,
     ensure_pricing_seed,
 )
 
@@ -238,3 +239,37 @@ def test_pricing_component_rejects_invalid_extra_plan_tier() -> None:
         assert code == "INVALID_EXTRA_PLAN_TIER" or "literal_error" in str(exc)
     else:
         raise AssertionError("Expected invalid extra tier validation")
+
+
+def test_pricing_summary_builds_commercial_matrix() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = PricingSummaryService(repository=repository)
+
+    summary = service.build_summary(product_type="website")
+
+    assert summary["productType"] == "website"
+    assert summary["plans"][0]["tier"] == "essential"
+    hero_pro = next(component for component in summary["components"] if component["componentCode"] == "hero_pro")
+    assert hero_pro["matrix"]["essential"]["status"] == "extra"
+    assert hero_pro["matrix"]["essential"]["label"] == "Extra $9990"
+    assert hero_pro["matrix"]["plus"]["status"] == "included"
+    assert hero_pro["matrix"]["plus"]["label"] == "Incluido"
+    essential_plan = next(plan for plan in summary["plans"] if plan["tier"] == "essential")
+    assert essential_plan["includedCount"] > 0
+    assert essential_plan["extraCount"] > 0
+
+
+def test_pricing_summary_excludes_inactive_components_by_default() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    component_service = PricingComponentService(repository=repository)
+    summary_service = PricingSummaryService(repository=repository)
+    hero_pro = next(component for component in component_service.list(product_type="website") if component["componentCode"] == "hero_pro")
+    component_service.update_active(hero_pro["id"], False)
+
+    summary_without_inactive = summary_service.build_summary(product_type="website")
+    summary_with_inactive = summary_service.build_summary(product_type="website", include_inactive=True)
+
+    assert all(component["componentCode"] != "hero_pro" for component in summary_without_inactive["components"])
+    assert any(component["componentCode"] == "hero_pro" for component in summary_with_inactive["components"])
