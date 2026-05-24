@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
+from app.core.errors import NuvlyError
 from app.modules.domain.schemas import WebsiteTemplateCreate, WebsiteTemplateResponse, WebsiteTemplateUpdate
 from app.modules.domain.services import TemplateService, WEBSITE_TEMPLATE_CONFIG
 
@@ -310,3 +311,73 @@ def test_website_template_legacy_blocks_are_exposed_as_pages() -> None:
     assert response["pages"][0]["blocks"] == legacy_blocks
     assert response["metadata"]["linkedPages"] == []
     assert snapshot["snapshot"]["pages"][0]["blocks"] == legacy_blocks
+
+
+def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract() -> None:
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    payload = _build_full_website_payload()
+    legacy_blocks = deepcopy(payload["pages"][0]["blocks"])
+    linked_pages = deepcopy(payload["pages"][1:])
+    payload.pop("pages")
+    payload["blocks"] = legacy_blocks
+    payload["metadata"]["linkedPages"] = linked_pages
+
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+    updated = service.update(
+        created["id"],
+        WebsiteTemplateUpdate.model_validate(
+            {
+                "title": created["title"],
+                "slug": created["slug"],
+                "styles": created["styles"],
+                "layout": created["layout"],
+                "blocks": legacy_blocks,
+                "seo": created["seo"],
+                "metadata": created["metadata"],
+            }
+        ),
+    )
+
+    assert updated["pages"][0]["blocks"] == legacy_blocks
+    assert updated["pages"][1]["id"] == "navigation_services::nav-0::overview"
+
+
+def test_pages_validation_rejects_duplicate_paths() -> None:
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    payload = _build_full_website_payload()
+    payload["pages"][1]["path"] = "/"
+
+    try:
+        service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code in {"DUPLICATED_PAGE_PATH", "INVALID_LINKED_PAGE_PATH"}
+    else:
+        raise AssertionError("Expected duplicate or invalid path validation error")
+
+
+def test_pages_validation_rejects_missing_parent_reference() -> None:
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    payload = _build_full_website_payload()
+    payload["pages"][1]["parentPageId"] = "missing-page"
+
+    try:
+        service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "PAGE_PARENT_NOT_FOUND"
+    else:
+        raise AssertionError("Expected PAGE_PARENT_NOT_FOUND")
+
+
+def test_pages_validation_rejects_two_primary_pages() -> None:
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    payload = _build_full_website_payload()
+    payload["pages"][1]["kind"] = "primary"
+    payload["pages"][1]["path"] = "/secondary-home"
+    payload["pages"][1]["parentPageId"] = None
+
+    try:
+        service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code in {"INVALID_PRIMARY_PAGE_COUNT", "INVALID_PRIMARY_PAGE_PATH"}
+    else:
+        raise AssertionError("Expected primary page validation error")

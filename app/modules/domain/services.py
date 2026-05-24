@@ -130,6 +130,17 @@ SERVER_MANAGED_TEMPLATE_FIELDS = {
     "updatedAt",
 }
 
+COMMON_EXPERIENCE_FIELDS = {
+    "title",
+    "slug",
+    "styles",
+    "layout",
+    "blocks",
+    "pages",
+    "seo",
+    "metadata",
+}
+
 
 class TemplateService:
     def __init__(self, config: TemplateConfig, repository: DomainRepository | None = None):
@@ -180,6 +191,13 @@ class TemplateService:
         logger.info("Template created | collection=%s id=%s", self.config.collection, document["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
 
+    def _merge_missing_template_fields(self, current: Dict[str, Any], document: Dict[str, Any]) -> Dict[str, Any]:
+        merged = deepcopy(document)
+        for field in COMMON_EXPERIENCE_FIELDS | {self.config.data_field}:
+            if field not in merged and field in current:
+                merged[field] = deepcopy(current[field])
+        return merged
+
     def list(
         self,
         limit: int = 20,
@@ -212,6 +230,7 @@ class TemplateService:
         document = payload.model_dump(mode="json", exclude_none=True)
         for field in SERVER_MANAGED_TEMPLATE_FIELDS:
             document.pop(field, None)
+        document = self._merge_missing_template_fields(current, document)
         document.update(
             {
                 "id": current["id"],
@@ -442,6 +461,22 @@ class CustomerProjectService:
         self.repository = repository or DomainRepository()
         self.template_service = TemplateService(config.template_config, repository=self.repository)
 
+    def _merge_missing_customer_fields(self, current: Dict[str, Any], document: Dict[str, Any]) -> Dict[str, Any]:
+        merged = deepcopy(document)
+        customer_specific_fields = {
+            self.config.data_field,
+            "customerData",
+            "publicSlug",
+        }
+        if self.config.entity_kind == "invitation":
+            customer_specific_fields.update({"guests", "rsvpResponses", "personalizedMessages"})
+        else:
+            customer_specific_fields.update({"leadForms", "formSubmissions", "customDomain"})
+        for field in COMMON_EXPERIENCE_FIELDS | customer_specific_fields:
+            if field not in merged and field in current:
+                merged[field] = deepcopy(current[field])
+        return merged
+
     def create_from_template(self, payload) -> Dict[str, Any]:
         template = self.repository.find_document(
             self.config.template_config.collection,
@@ -531,6 +566,7 @@ class CustomerProjectService:
         current = self.get(project_id)
         now = utc_now_iso()
         document = payload.model_dump(mode="json", exclude_none=True)
+        document = self._merge_missing_customer_fields(current, document)
         public_slug = self._normalize_public_slug(document.get("publicSlug"), document.get("title"))
         if not document.get("slug"):
             document["slug"] = current["slug"]

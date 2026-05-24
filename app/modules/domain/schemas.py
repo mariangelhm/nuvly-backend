@@ -67,6 +67,8 @@ class Metadata(BaseModel):
     catalogVisible: bool = False
     previewVariant: str = ""
     previewStyle: Dict[str, Any] = Field(default_factory=dict)
+    linkedPages: List[Dict[str, Any]] = Field(default_factory=list)
+    model_config = ConfigDict(extra="allow")
 
 
 class InvitationData(BaseModel):
@@ -121,13 +123,35 @@ class CustomerData(BaseModel):
     phone: str = ""
 
 
+class PageSource(BaseModel):
+    blockId: Optional[str] = None
+    blockType: Optional[str] = None
+    sourceItemIndex: Optional[int] = None
+    sourceChildKey: Optional[str] = None
+    model_config = ConfigDict(extra="allow")
+
+
+class ExperiencePage(BaseModel):
+    id: str
+    kind: str
+    title: str
+    slug: str = ""
+    path: str
+    parentPageId: Optional[str] = None
+    source: PageSource = Field(default_factory=PageSource)
+    seo: Dict[str, Any] = Field(default_factory=dict)
+    settings: Dict[str, Any] = Field(default_factory=dict)
+    blocks: List[Dict[str, Any]] = Field(default_factory=list)
+    model_config = ConfigDict(extra="allow")
+
+
 class InvitationTemplateCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
-    pages: Optional[List[Dict[str, Any]]] = None
+    pages: Optional[List[ExperiencePage]] = None
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
@@ -141,7 +165,7 @@ class WebsiteTemplateCreate(BaseModel):
     styles: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     blocks: Optional[List[WebsiteBlock]] = None
-    pages: Optional[List[Dict[str, Any]]] = None
+    pages: Optional[List[ExperiencePage]] = None
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(extra="allow")
@@ -150,25 +174,26 @@ class WebsiteTemplateCreate(BaseModel):
 class InvitationTemplateUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: str = Field(min_length=1, max_length=160)
-    styles: Styles = Field(default_factory=Styles)
-    layout: Layout = Field(default_factory=Layout)
-    blocks: List[ExperienceBlock] = Field(default_factory=list)
-    pages: List[Dict[str, Any]] = Field(default_factory=list)
-    seo: Seo = Field(default_factory=Seo)
-    metadata: Metadata = Field(default_factory=Metadata)
-    invitationData: InvitationData = Field(default_factory=InvitationData)
+    styles: Optional[Styles] = None
+    layout: Optional[Layout] = None
+    blocks: Optional[List[ExperienceBlock]] = None
+    pages: Optional[List[ExperiencePage]] = None
+    seo: Optional[Seo] = None
+    metadata: Optional[Metadata] = None
+    invitationData: Optional[InvitationData] = None
+    model_config = ConfigDict(extra="ignore")
 
 
 class WebsiteTemplateUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: str = Field(min_length=1, max_length=160)
     experienceType: Literal["web"] = "web"
-    styles: Dict[str, Any] = Field(default_factory=dict)
-    layout: Dict[str, Any] = Field(default_factory=dict)
-    blocks: List[WebsiteBlock] = Field(default_factory=list)
-    pages: List[Dict[str, Any]] = Field(default_factory=list)
-    seo: Dict[str, Any] = Field(default_factory=dict)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    styles: Optional[Dict[str, Any]] = None
+    layout: Optional[Dict[str, Any]] = None
+    blocks: Optional[List[WebsiteBlock]] = None
+    pages: Optional[List[ExperiencePage]] = None
+    seo: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -208,34 +233,36 @@ class CustomerInvitationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
-    styles: Styles = Field(default_factory=Styles)
-    layout: Layout = Field(default_factory=Layout)
-    blocks: List[ExperienceBlock] = Field(default_factory=list)
-    pages: List[Dict[str, Any]] = Field(default_factory=list)
-    seo: Seo = Field(default_factory=Seo)
-    metadata: Metadata = Field(default_factory=Metadata)
-    invitationData: InvitationData = Field(default_factory=InvitationData)
-    customerData: CustomerData = Field(default_factory=CustomerData)
-    guests: List[Dict[str, Any]] = Field(default_factory=list)
-    rsvpResponses: List[Dict[str, Any]] = Field(default_factory=list)
-    personalizedMessages: List[Dict[str, Any]] = Field(default_factory=list)
+    styles: Optional[Styles] = None
+    layout: Optional[Layout] = None
+    blocks: Optional[List[ExperienceBlock]] = None
+    pages: Optional[List[ExperiencePage]] = None
+    seo: Optional[Seo] = None
+    metadata: Optional[Metadata] = None
+    invitationData: Optional[InvitationData] = None
+    customerData: Optional[CustomerData] = None
+    guests: Optional[List[Dict[str, Any]]] = None
+    rsvpResponses: Optional[List[Dict[str, Any]]] = None
+    personalizedMessages: Optional[List[Dict[str, Any]]] = None
+    model_config = ConfigDict(extra="ignore")
 
 
 class CustomerWebsiteUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
-    styles: Styles = Field(default_factory=Styles)
-    layout: Layout = Field(default_factory=Layout)
-    blocks: List[ExperienceBlock] = Field(default_factory=list)
-    pages: List[Dict[str, Any]] = Field(default_factory=list)
-    seo: Seo = Field(default_factory=Seo)
-    metadata: Metadata = Field(default_factory=Metadata)
-    websiteData: WebsiteData = Field(default_factory=WebsiteData)
-    customerData: CustomerData = Field(default_factory=CustomerData)
-    leadForms: List[Dict[str, Any]] = Field(default_factory=list)
-    formSubmissions: List[Dict[str, Any]] = Field(default_factory=list)
+    styles: Optional[Styles] = None
+    layout: Optional[Layout] = None
+    blocks: Optional[List[ExperienceBlock]] = None
+    pages: Optional[List[ExperiencePage]] = None
+    seo: Optional[Seo] = None
+    metadata: Optional[Metadata] = None
+    websiteData: Optional[WebsiteData] = None
+    customerData: Optional[CustomerData] = None
+    leadForms: Optional[List[Dict[str, Any]]] = None
+    formSubmissions: Optional[List[Dict[str, Any]]] = None
     customDomain: Optional[str] = None
+    model_config = ConfigDict(extra="ignore")
 
 
 class CustomerInvitationResponse(CustomerInvitationUpdate):

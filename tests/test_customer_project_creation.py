@@ -226,6 +226,8 @@ def test_update_customer_project_generates_public_slug_from_title() -> None:
     )
 
     assert updated["publicSlug"] == "mi-sitio-final"
+    assert updated["pages"][0]["blocks"] == project["blocks"]
+    assert updated["pages"][1]["id"] == "blk_hero::details"
 
 
 def test_pending_payment_requires_title_and_public_slug() -> None:

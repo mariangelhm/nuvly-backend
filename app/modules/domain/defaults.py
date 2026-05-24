@@ -1,6 +1,15 @@
 from copy import deepcopy
 
 
+def default_page_source() -> dict:
+    return {
+        "blockId": None,
+        "blockType": None,
+        "sourceItemIndex": None,
+        "sourceChildKey": None,
+    }
+
+
 def default_main_page(title: str = "Pagina principal", blocks: list[dict] | None = None) -> dict:
     return {
         "id": "main",
@@ -9,12 +18,7 @@ def default_main_page(title: str = "Pagina principal", blocks: list[dict] | None
         "slug": "",
         "path": "/",
         "parentPageId": None,
-        "source": {
-            "blockId": None,
-            "blockType": None,
-            "sourceItemIndex": None,
-            "sourceChildKey": None,
-        },
+        "source": default_page_source(),
         "seo": {},
         "settings": {},
         "blocks": deepcopy(blocks or []),

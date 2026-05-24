@@ -16,6 +16,9 @@ from app.modules.health.routes import router as health_router
 from app.modules.media.routes import router as media_router
 from app.modules.media.service import ensure_static_directories
 from app.modules.payments.routes import router as payments_router
+from app.modules.pricing.routes import admin_router as pricing_admin_router
+from app.modules.pricing.routes import router as pricing_router
+from app.modules.pricing.service import ensure_pricing_seed
 from app.modules.published.routes import router as published_router
 
 configure_logging()
@@ -27,7 +30,15 @@ async def lifespan(app: FastAPI):
     try:
         ping_database()
         create_indexes()
+        seed_stats = ensure_pricing_seed()
         logger.info("MongoDB connected and indexes created")
+        logger.info(
+            "Pricing seed ensured | insertedPlans=%s insertedComponents=%s skippedPlans=%s skippedComponents=%s",
+            seed_stats.insertedPlans,
+            seed_stats.insertedComponents,
+            seed_stats.skippedPlans,
+            seed_stats.skippedComponents,
+        )
     except Exception:
         logger.exception("MongoDB startup failed")
         raise
@@ -59,6 +70,8 @@ app.include_router(health_router, prefix=settings.api_prefix)
 app.include_router(experiences_router, prefix=settings.api_prefix)
 app.include_router(media_router, prefix=settings.api_prefix)
 app.include_router(payments_router, prefix=settings.api_prefix)
+app.include_router(pricing_router, prefix=settings.api_prefix)
+app.include_router(pricing_admin_router, prefix=settings.api_prefix)
 app.include_router(published_router, prefix=settings.api_prefix)
 app.include_router(studio_router, prefix=settings.api_prefix)
 app.include_router(public_router, prefix=settings.api_prefix)

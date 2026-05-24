@@ -2,7 +2,7 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 from app.core.errors import NuvlyError
-from app.modules.domain.defaults import default_main_page
+from app.modules.domain.defaults import default_main_page, default_page_source
 from app.modules.experiences.registry import BLOCK_REGISTRY
 from app.modules.experiences.utils import slugify
 
@@ -20,6 +20,10 @@ NON_INDEXABLE_STATUSES = {
     "paid",
     "cancelled",
 }
+
+PRIMARY_PAGE_KIND = "primary"
+LINKED_PAGE_KIND = "linked"
+SUPPORTED_PAGE_KINDS = {PRIMARY_PAGE_KIND, LINKED_PAGE_KIND}
 
 
 def validate_block(block: Dict[str, Any]) -> None:
@@ -101,20 +105,16 @@ def _legacy_linked_pages(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         normalized_page.setdefault("slug", slugify(normalized_page.get("title", "")))
         normalized_page.setdefault("path", f"/{normalized_page['slug']}" if normalized_page["slug"] else f"/linked-{index}")
         normalized_page.setdefault("parentPageId", "main")
-        normalized_page.setdefault(
-            "source",
-            {
-                "blockId": None,
-                "blockType": None,
-                "sourceItemIndex": None,
-                "sourceChildKey": None,
-            },
-        )
+        normalized_page.setdefault("source", default_page_source())
         normalized_page.setdefault("seo", {})
         normalized_page.setdefault("settings", {})
         normalized_page["blocks"] = _normalize_blocks(normalized_page.get("blocks"))
         normalized_pages.append(normalized_page)
     return normalized_pages
+
+
+def _has_legacy_page_content(document: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+    return bool(document.get("blocks")) or bool(metadata.get("linkedPages"))
 
 
 def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -131,10 +131,17 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
         raise NuvlyError("pages debe ser una lista.", 422, "INVALID_PAGES")
 
     pages = pages_value
+    if not pages and _has_legacy_page_content(document, metadata):
+        primary_title = document.get("title") or "Pagina principal"
+        legacy_pages = [default_main_page(primary_title, document.get("blocks"))]
+        legacy_pages.extend(_legacy_linked_pages(metadata))
+        return legacy_pages
     if not pages:
         return [default_main_page(document.get("title") or "Pagina principal")]
 
     seen_page_ids: set[str] = set()
+    seen_page_paths: set[str] = set()
+    seen_page_slugs: set[str] = set()
     primary_count = 0
     for page in pages:
         if not isinstance(page, dict):
@@ -149,7 +156,9 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
         page_kind = page.get("kind")
         if not isinstance(page_kind, str) or not page_kind.strip():
             raise NuvlyError("Cada page debe tener kind no vacio.", 422, "INVALID_PAGE_KIND")
-        if page_kind == "primary":
+        if page_kind not in SUPPORTED_PAGE_KINDS:
+            raise NuvlyError("page.kind debe ser 'primary' o 'linked'.", 422, "INVALID_PAGE_KIND")
+        if page_kind == PRIMARY_PAGE_KIND:
             primary_count += 1
 
         page_title = page.get("title")
@@ -159,7 +168,7 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
         page_slug = page.get("slug", "")
         if not isinstance(page_slug, str):
             raise NuvlyError("Cada page debe tener slug string.", 422, "INVALID_PAGE_SLUG")
-        if page_kind != "primary":
+        if page_kind != PRIMARY_PAGE_KIND:
             page["slug"] = slugify(page_slug or page_title)
         else:
             page["slug"] = slugify(page_slug) if page_slug else ""
@@ -167,15 +176,35 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
         page_path = page.get("path")
         if not isinstance(page_path, str) or not page_path.strip():
             raise NuvlyError("Cada page debe tener path no vacio.", 422, "INVALID_PAGE_PATH")
+        if not page_path.startswith("/"):
+            raise NuvlyError("Cada page debe tener path absoluto.", 422, "INVALID_PAGE_PATH")
+        if page_path in seen_page_paths:
+            raise NuvlyError(f"Pagina duplicada por path: {page_path}", 422, "DUPLICATED_PAGE_PATH")
+        seen_page_paths.add(page_path)
+
+        if page["slug"]:
+            if page["slug"] in seen_page_slugs:
+                raise NuvlyError(f"Pagina duplicada por slug: {page['slug']}", 422, "DUPLICATED_PAGE_SLUG")
+            seen_page_slugs.add(page["slug"])
 
         parent_page_id = page.get("parentPageId")
         if parent_page_id is not None and (not isinstance(parent_page_id, str) or not parent_page_id.strip()):
             raise NuvlyError("parentPageId debe ser string o null.", 422, "INVALID_PARENT_PAGE_ID")
+        if page_kind == PRIMARY_PAGE_KIND:
+            if page_path != "/":
+                raise NuvlyError("La pagina primaria debe usar path '/'.", 422, "INVALID_PRIMARY_PAGE_PATH")
+            if parent_page_id is not None:
+                raise NuvlyError("La pagina primaria no puede tener parentPageId.", 422, "INVALID_PRIMARY_PARENT")
+        else:
+            if page_path == "/":
+                raise NuvlyError("Las paginas linked no pueden usar path '/'.", 422, "INVALID_LINKED_PAGE_PATH")
+            if parent_page_id is None:
+                raise NuvlyError("Las paginas linked deben tener parentPageId.", 422, "INVALID_LINKED_PARENT")
 
         source = page.get("source") or {}
         if not isinstance(source, dict):
             raise NuvlyError("page.source debe ser un objeto.", 422, "INVALID_PAGE_SOURCE")
-        page["source"] = source
+        page["source"] = {**default_page_source(), **source}
 
         seo = page.get("seo") or {}
         if not isinstance(seo, dict):
@@ -190,12 +219,16 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     if primary_count != 1:
         raise NuvlyError("Debe existir exactamente una page primaria.", 422, "INVALID_PRIMARY_PAGE_COUNT")
+    for page in pages:
+        parent_page_id = page.get("parentPageId")
+        if parent_page_id is not None and parent_page_id not in seen_page_ids:
+            raise NuvlyError(f"parentPageId inexistente: {parent_page_id}", 422, "PAGE_PARENT_NOT_FOUND")
 
     return pages
 
 
 def _sync_pages_and_legacy_fields(normalized: Dict[str, Any], pages: List[Dict[str, Any]]) -> None:
-    primary_page = next((page for page in pages if page.get("kind") == "primary"), None)
+    primary_page = next((page for page in pages if page.get("kind") == PRIMARY_PAGE_KIND), None)
     if primary_page is None:
         raise NuvlyError("No se encontro la pagina principal.", 422, "PRIMARY_PAGE_NOT_FOUND")
 
@@ -204,7 +237,7 @@ def _sync_pages_and_legacy_fields(normalized: Dict[str, Any], pages: List[Dict[s
     normalized["pages"] = pages
 
     normalized["metadata"] = normalized.get("metadata") or {}
-    normalized["metadata"]["linkedPages"] = [deepcopy(page) for page in pages if page.get("kind") != "primary"]
+    normalized["metadata"]["linkedPages"] = [deepcopy(page) for page in pages if page.get("kind") != PRIMARY_PAGE_KIND]
 
 
 def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:

@@ -190,6 +190,39 @@ def test_public_get_by_slug_reads_current_published_snapshot_without_catalog_vis
     assert response["snapshot"]["metadata"]["coverImage"] == "/assets/invitation-cover.jpg"
 
 
+def test_invitation_legacy_linked_pages_are_preserved_in_pages_snapshot() -> None:
+    repository = InMemoryDomainRepository()
+    service = TemplateService(INVITATION_TEMPLATE_CONFIG, repository=repository)
+    payload = _invitation_payload(catalog_visible=False)
+    payload["metadata"]["linkedPages"] = [
+        {
+            "id": "schedule-details",
+            "kind": "linked",
+            "title": "Schedule details",
+            "slug": "schedule-details",
+            "path": "/schedule-details",
+            "parentPageId": "main",
+            "source": {
+                "blockId": "blk_intro",
+                "blockType": "intro",
+                "sourceItemIndex": None,
+                "sourceChildKey": "details",
+            },
+            "seo": {},
+            "settings": {"enabled": True},
+            "blocks": [],
+        }
+    ]
+
+    created = service.create(InvitationTemplateCreate.model_validate(payload))
+    published_snapshot = service.publish(created["id"])
+    public_response = service.get_public_by_slug(created["slug"])
+
+    assert created["pages"][1]["id"] == "schedule-details"
+    assert published_snapshot["snapshot"]["pages"][1]["path"] == "/schedule-details"
+    assert public_response["snapshot"]["metadata"]["linkedPages"][0]["id"] == "schedule-details"
+
+
 def test_public_list_includes_published_template_without_snapshot_and_logs(caplog) -> None:
     repository = InMemoryDomainRepository()
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)

@@ -7,6 +7,12 @@ Este servicio guarda, valida, publica y sirve experiencias visuales para:
 - páginas web
 - invitaciones digitales
 
+Modelo actual del Studio:
+
+- `pages[]` es la fuente principal de verdad para páginas editables.
+- `blocks` en raíz sigue existiendo por compatibilidad y refleja los bloques de la página primaria.
+- `metadata.linkedPages` se sigue exponiendo por compatibilidad y refleja las páginas `kind="linked"`.
+
 La idea central es que el frontend **NO renderiza desde HTML guardado**. El frontend renderiza desde configuración estructurada:
 
 - `styles`
@@ -956,6 +962,58 @@ Respuesta esperada para rehidratación del editor:
   "layout": {
     "sectionOrder": ["blk_navigation", "blk_hero"]
   },
+  "pages": [
+    {
+      "id": "main",
+      "kind": "primary",
+      "title": "Web Principal",
+      "slug": "",
+      "path": "/",
+      "parentPageId": null,
+      "source": {
+        "blockId": null,
+        "blockType": null,
+        "sourceItemIndex": null,
+        "sourceChildKey": null
+      },
+      "seo": {},
+      "settings": {},
+      "blocks": [
+        {
+          "id": "blk_navigation",
+          "type": "navigation",
+          "label": "Navigation",
+          "category": "marketing",
+          "description": "Block navigation description",
+          "variant": "navigation-variant-a",
+          "enabled": true,
+          "order": 1,
+          "props": {},
+          "settings": {}
+        }
+      ]
+    },
+    {
+      "id": "navigation_services::nav-0::overview",
+      "kind": "linked",
+      "title": "Servicios overview",
+      "slug": "servicios-overview",
+      "path": "/servicios-overview",
+      "parentPageId": "main",
+      "source": {
+        "blockId": "blk_navigation",
+        "blockType": "navigation",
+        "sourceItemIndex": 0,
+        "sourceChildKey": "overview"
+      },
+      "seo": {},
+      "settings": {
+        "enabled": true,
+        "tier": "pro"
+      },
+      "blocks": []
+    }
+  ],
   "blocks": [
     {
       "id": "blk_navigation",
@@ -989,7 +1047,29 @@ Respuesta esperada para rehidratación del editor:
     "previewVariant": "desktop",
     "previewStyle": {
       "frame": "browser"
-    }
+    },
+    "linkedPages": [
+      {
+        "id": "navigation_services::nav-0::overview",
+        "kind": "linked",
+        "title": "Servicios overview",
+        "slug": "servicios-overview",
+        "path": "/servicios-overview",
+        "parentPageId": "main",
+        "source": {
+          "blockId": "blk_navigation",
+          "blockType": "navigation",
+          "sourceItemIndex": 0,
+          "sourceChildKey": "overview"
+        },
+        "seo": {},
+        "settings": {
+          "enabled": true,
+          "tier": "pro"
+        },
+        "blocks": []
+      }
+    ]
   },
   "statusHistory": [
     {
@@ -1009,7 +1089,20 @@ Respuesta esperada para rehidratación del editor:
 Reglas del contrato:
 
 - `experienceType` siempre debe salir como `"web"`.
+- `pages[]` es el contrato canónico de páginas del editor.
+- Debe existir exactamente una página `kind="primary"`.
+- La página primaria debe usar `path="/"` y no puede tener `parentPageId`.
+- Las páginas `kind="linked"` deben tener `parentPageId`, `path` absoluto y no pueden usar `path="/"`.
+- `path`, `slug` e `id` deben ser únicos dentro del documento.
+- `parentPageId` debe apuntar a una página existente.
 - `styles`, `layout`, `blocks`, `seo` y `metadata` se devuelven completos, preservando claves extra persistidas por el front.
+- `blocks` en raíz refleja siempre los bloques de la página primaria.
+- `metadata.linkedPages` se mantiene por compatibilidad con clientes legacy y refleja las páginas `kind="linked"`.
 - Cada bloque preserva `label`, `category`, `description`, `variant`, `props`, `settings` y cualquier otro campo adicional persistido.
 - `websiteData` solo se devuelve si realmente fue persistido; el backend no inventa un objeto vacío.
 - El contrato soporta round-trip `guardar -> leer -> guardar` sin perder información estructural del template.
+
+Compatibilidad legacy:
+
+- Si un cliente viejo envía solo `blocks` en raíz y/o `metadata.linkedPages`, el backend reconstruye `pages[]`.
+- Si un cliente viejo hace `PUT` sin `pages`, el backend preserva las páginas existentes y no vacía la primaria.

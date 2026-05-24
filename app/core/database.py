@@ -94,6 +94,14 @@ def create_indexes() -> None:
     db.media_assets.create_index([("scope", ASCENDING)])
     db.media_assets.create_index([("ownerId", ASCENDING)])
     db.media_assets.create_index([("createdAt", ASCENDING)])
+    db.pricing_plans.create_index([("id", ASCENDING)], unique=True)
+    db.pricing_plans.create_index([("code", ASCENDING)], unique=True)
+    db.pricing_plans.create_index([("productType", ASCENDING), ("active", ASCENDING)])
+    db.pricing_plans.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])
+    db.pricing_components.create_index([("id", ASCENDING)], unique=True)
+    db.pricing_components.create_index([("componentCode", ASCENDING)], unique=True)
+    db.pricing_components.create_index([("productType", ASCENDING), ("active", ASCENDING)])
+    db.pricing_components.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])
 
 
 def ping_database() -> bool:
