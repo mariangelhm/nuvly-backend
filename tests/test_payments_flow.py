@@ -7,6 +7,7 @@ from app.modules.domain.schemas import CustomerData, CustomerProjectCreate, Webs
 from app.modules.domain.services import CUSTOMER_WEBSITE_CONFIG, CustomerProjectService, WEBSITE_TEMPLATE_CONFIG, TemplateService
 from app.modules.payments.schemas import CreateCheckoutRequest, PaymentWebhookPayload
 from app.modules.payments.service import PaymentService
+from app.modules.pricing.service import ensure_pricing_seed
 
 
 def _get_nested(document: Dict[str, Any], dotted_key: str) -> Any:
@@ -108,6 +109,7 @@ def _website_payload() -> Dict[str, Any]:
 
 
 def _create_customer_project(repository: InMemoryDomainRepository) -> Dict[str, Any]:
+    ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
     created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))

@@ -10,6 +10,7 @@ from app.modules.domain.services import (
     CustomerProjectService,
     TemplateService,
 )
+from app.modules.pricing.service import ensure_pricing_seed
 
 
 def _get_nested(document: Dict[str, Any], dotted_key: str) -> Any:
@@ -148,6 +149,7 @@ def _website_payload() -> Dict[str, Any]:
 
 def test_public_template_read_does_not_create_customer_project() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
@@ -161,6 +163,7 @@ def test_public_template_read_does_not_create_customer_project() -> None:
 
 def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
 
@@ -176,6 +179,9 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
 
     assert project["templateId"] == created["id"]
     assert project["templateSnapshotId"] == published_snapshot["id"]
+    assert project["productType"] == "website"
+    assert project["planTier"] == "plus"
+    assert project["templateCategory"] == "corporate"
     assert project["customerStatus"] == "draft"
     assert project["payment"]["status"] == "unpaid"
     assert project["statusHistory"][0]["status"] == "draft"
@@ -190,6 +196,7 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
 
 def test_update_customer_project_generates_public_slug_from_title() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
 
@@ -232,6 +239,7 @@ def test_update_customer_project_generates_public_slug_from_title() -> None:
 
 def test_pending_payment_requires_title_and_public_slug() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
 

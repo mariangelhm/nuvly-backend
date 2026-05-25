@@ -6,6 +6,7 @@ from typing import Any, Dict
 from app.core.errors import NuvlyError
 from app.modules.domain.schemas import WebsiteTemplateCreate, WebsiteTemplateResponse, WebsiteTemplateUpdate
 from app.modules.domain.services import TemplateService, WEBSITE_TEMPLATE_CONFIG
+from app.modules.pricing.service import ensure_pricing_seed
 
 
 def _get_nested(document: Dict[str, Any], dotted_key: str) -> Any:
@@ -248,7 +249,9 @@ def _assert_contract_subset(document: Dict[str, Any]) -> None:
 
 
 def test_website_template_contract_preserves_complete_shape() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(WebsiteTemplateCreate.model_validate(_build_full_website_payload()))
     response = _response_json(created)
@@ -263,7 +266,9 @@ def test_website_template_contract_preserves_complete_shape() -> None:
 
 
 def test_website_template_get_put_round_trip_is_lossless_for_editor_contract() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(WebsiteTemplateCreate.model_validate(_build_full_website_payload()))
     first_read = _response_json(service.get(created["id"]))
@@ -281,7 +286,9 @@ def test_website_template_get_put_round_trip_is_lossless_for_editor_contract() -
 
 
 def test_website_template_preserves_website_data_when_front_persists_it() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     payload["websiteData"] = {
         "businessName": "Nuvly Studio",
@@ -297,7 +304,9 @@ def test_website_template_preserves_website_data_when_front_persists_it() -> Non
 
 
 def test_website_template_legacy_blocks_are_exposed_as_pages() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     legacy_blocks = deepcopy(payload["pages"][0]["blocks"])
     payload.pop("pages")
@@ -314,7 +323,9 @@ def test_website_template_legacy_blocks_are_exposed_as_pages() -> None:
 
 
 def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     legacy_blocks = deepcopy(payload["pages"][0]["blocks"])
     linked_pages = deepcopy(payload["pages"][1:])
@@ -343,7 +354,9 @@ def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract()
 
 
 def test_pages_validation_rejects_duplicate_paths() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     payload["pages"][1]["path"] = "/"
 
@@ -356,7 +369,9 @@ def test_pages_validation_rejects_duplicate_paths() -> None:
 
 
 def test_pages_validation_rejects_missing_parent_reference() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     payload["pages"][1]["parentPageId"] = "missing-page"
 
@@ -369,7 +384,9 @@ def test_pages_validation_rejects_missing_parent_reference() -> None:
 
 
 def test_pages_validation_rejects_two_primary_pages() -> None:
-    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=InMemoryDomainRepository())
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     payload = _build_full_website_payload()
     payload["pages"][1]["kind"] = "primary"
     payload["pages"][1]["path"] = "/secondary-home"
@@ -381,3 +398,15 @@ def test_pages_validation_rejects_two_primary_pages() -> None:
         assert exc.code in {"INVALID_PRIMARY_PAGE_COUNT", "INVALID_PRIMARY_PAGE_PATH"}
     else:
         raise AssertionError("Expected primary page validation error")
+
+
+def test_website_template_normalizes_legacy_metadata_level_names() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _build_full_website_payload()
+    payload["metadata"]["level"] = "pro"
+
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["metadata"]["level"] == "advanced"

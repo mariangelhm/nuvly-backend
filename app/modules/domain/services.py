@@ -4,6 +4,18 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from app.core.catalog import (
+    DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE,
+    DEFAULT_TEMPLATE_CATEGORY_BY_PRODUCT_TYPE,
+    PlanTier,
+    ProductType,
+    TemplateCategoryCode,
+    VariantLevel,
+    normalize_plan_tier,
+    normalize_product_type,
+    normalize_template_category,
+)
+from app.core.utils import new_id, slugify, utc_now_iso
 from app.core.errors import NuvlyError
 from app.modules.domain.defaults import (
     default_customer_data,
@@ -14,7 +26,7 @@ from app.modules.domain.defaults import (
 )
 from app.modules.domain.normalizer import normalize_document
 from app.modules.domain.repository import DomainRepository
-from app.modules.experiences.utils import new_id, slugify, utc_now_iso
+from app.modules.pricing.service import PricingComponentService, TemplateCategoryService, resolve_variant_status
 
 logger = logging.getLogger(__name__)
 PUBLIC_SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
@@ -133,19 +145,100 @@ SERVER_MANAGED_TEMPLATE_FIELDS = {
 COMMON_EXPERIENCE_FIELDS = {
     "title",
     "slug",
+    "productType",
+    "planTier",
+    "templateCategory",
     "styles",
     "layout",
     "blocks",
     "pages",
     "seo",
     "metadata",
+    "selectedComponentExtras",
 }
+
+
+def _collect_document_blocks(document: Dict[str, Any]) -> List[Dict[str, Any]]:
+    pages = document.get("pages") or []
+    if pages:
+        collected: List[Dict[str, Any]] = []
+        for page in pages:
+            collected.extend(page.get("blocks") or [])
+        return collected
+    return document.get("blocks") or []
+
+
+def _normalize_selected_component_extras(extras: List[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    for extra in extras or []:
+        component_code = (extra.get("componentCode") or "").strip()
+        variant_code = (extra.get("variantCode") or "").strip()
+        if not component_code or not variant_code:
+            continue
+        normalized.append(
+            {
+                "componentCode": component_code,
+                "variantCode": variant_code,
+                "extraPrice": int(extra.get("extraPrice") or 0),
+            }
+        )
+    return normalized
+
+
+class CommercialRulesService:
+    def __init__(self, repository: DomainRepository):
+        self.component_service = PricingComponentService(repository=repository)  # type: ignore[arg-type]
+        self.category_service = TemplateCategoryService(repository=repository)  # type: ignore[arg-type]
+
+    def validate_document(self, document: Dict[str, Any]) -> None:
+        product_type = document.get("productType")
+        plan_tier = document.get("planTier")
+        template_category = document.get("templateCategory")
+
+        if not product_type:
+            raise NuvlyError("productType es obligatorio.", 422, "PRODUCT_TYPE_REQUIRED")
+        if not plan_tier:
+            raise NuvlyError("planTier es obligatorio.", 422, "PLAN_TIER_REQUIRED")
+        if not template_category:
+            raise NuvlyError("templateCategory es obligatorio.", 422, "TEMPLATE_CATEGORY_REQUIRED")
+
+        category_document = self.category_service.get_by_code(product_type, template_category)
+        allowed_component_codes = set(category_document.get("allowedComponentCodes", []))
+        selected_component_extras = {
+            (item["componentCode"], item["variantCode"])
+            for item in _normalize_selected_component_extras(document.get("selectedComponentExtras"))
+        }
+
+        for block in _collect_document_blocks(document):
+            component_code = block.get("type")
+            variant_code = block.get("variant")
+            component_with_variant = self.component_service.find_variant(product_type, component_code, variant_code)
+            component = component_with_variant["component"]
+            variant = component_with_variant["variant"]
+
+            if not component.get("active", True) or not variant.get("active", True):
+                raise NuvlyError("La variante seleccionada esta inactiva.", 422, "INACTIVE_COMPONENT_VARIANT")
+
+            if plan_tier != "custom" and component_code not in allowed_component_codes:
+                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+
+            status = resolve_variant_status(
+                variant,
+                plan_tier,
+                component_allowed=component_code in allowed_component_codes or plan_tier == "custom",
+                component_active=component.get("active", True),
+            )
+            if plan_tier != "custom" and status == "blocked_by_plan":
+                raise NuvlyError("La variante no esta permitida por el plan.", 422, "VARIANT_NOT_ALLOWED_FOR_PLAN")
+            if plan_tier != "custom" and status == "extra" and (component_code, variant_code) not in selected_component_extras:
+                raise NuvlyError("La variante premium requiere ser seleccionada como extra.", 422, "PREMIUM_VARIANT_REQUIRES_EXTRA")
 
 
 class TemplateService:
     def __init__(self, config: TemplateConfig, repository: DomainRepository | None = None):
         self.config = config
         self.repository = repository or DomainRepository()
+        self.commercial_rules = CommercialRulesService(self.repository)
 
     def _ensure_slug_available(self, slug: str, current_id: Optional[str] = None) -> None:
         existing = self.repository.find_document_by_slug(self.config.collection, slug)
@@ -180,6 +273,10 @@ class TemplateService:
         )
         for key, value in payload_data.items():
             document[key] = value
+        product_type = normalize_product_type(document.get("productType"), default="invitation" if self.config.entity_kind == "invitation" else "website")
+        document["productType"] = product_type
+        document["planTier"] = normalize_plan_tier(document.get("planTier"), default=DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE[product_type])
+        document["templateCategory"] = normalize_template_category(document.get("templateCategory"), product_type=product_type)
         if "pages" not in payload_data:
             document.pop("pages", None)
         if self.config.data_field not in payload_data:
@@ -187,6 +284,7 @@ class TemplateService:
         document["updatedAt"] = now
         append_status_history(document, "templateStatus", None, "initial_draft")
         document = normalize_document(document, "templateStatus")
+        self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"])
         logger.info("Template created | collection=%s id=%s", self.config.collection, document["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
@@ -204,14 +302,14 @@ class TemplateService:
         skip: int = 0,
         template_status: Optional[str] = None,
         category: Optional[str] = None,
-        level: Optional[str] = None,
+        level: Optional[VariantLevel] = None,
         catalog_visible: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         filters: Dict[str, Any] = {}
         if template_status:
             filters["templateStatus"] = template_status
         if category:
-            filters["metadata.category"] = category
+            filters["templateCategory"] = category
         if level:
             filters["metadata.level"] = level
         if catalog_visible is not None:
@@ -235,6 +333,7 @@ class TemplateService:
             {
                 "id": current["id"],
                 "experienceType": self.config.experience_type,
+                "productType": normalize_product_type(current.get("productType"), default="invitation" if self.config.entity_kind == "invitation" else "website"),
                 "templateStatus": current["templateStatus"],
                 "statusHistory": current.get("statusHistory", []),
                 "publishedSnapshotId": current.get("publishedSnapshotId"),
@@ -244,6 +343,7 @@ class TemplateService:
             }
         )
         document = normalize_document(document, "templateStatus")
+        self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"], current_id=template_id)
         logger.info("Template updated | collection=%s id=%s", self.config.collection, template_id)
         return self.repository.replace_document(
@@ -286,6 +386,7 @@ class TemplateService:
             append_status_history(document, "templateStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "templateStatus")
+        self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": template_id}) + 1
         snapshot = {
@@ -341,13 +442,13 @@ class TemplateService:
         limit: int = 20,
         skip: int = 0,
         category: Optional[str] = None,
-        level: Optional[str] = None,
+        level: Optional[VariantLevel] = None,
         tags: Optional[List[str]] = None,
         extra_filter_value: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         filters: Dict[str, Any] = {"templateStatus": "published"}
         if category:
-            filters["metadata.category"] = category
+            filters["templateCategory"] = category
         if level:
             filters["metadata.level"] = level
         if tags:
@@ -409,6 +510,9 @@ class TemplateService:
             "title": document["title"],
             "slug": document["slug"],
             "experienceType": self.config.experience_type,
+            "productType": document["productType"],
+            "planTier": document["planTier"],
+            "templateCategory": document["templateCategory"],
             "templateStatus": "published",
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
@@ -416,6 +520,7 @@ class TemplateService:
             "pages": deepcopy(document.get("pages", [])),
             "seo": deepcopy(document.get("seo", {})),
             "metadata": deepcopy(document.get("metadata", {})),
+            "selectedComponentExtras": deepcopy(document.get("selectedComponentExtras", [])),
             "version": version,
             "publishedAt": now,
         }
@@ -460,6 +565,7 @@ class CustomerProjectService:
         self.config = config
         self.repository = repository or DomainRepository()
         self.template_service = TemplateService(config.template_config, repository=self.repository)
+        self.commercial_rules = CommercialRulesService(self.repository)
 
     def _merge_missing_customer_fields(self, current: Dict[str, Any], document: Dict[str, Any]) -> Dict[str, Any]:
         merged = deepcopy(document)
@@ -467,6 +573,10 @@ class CustomerProjectService:
             self.config.data_field,
             "customerData",
             "publicSlug",
+            "productType",
+            "planTier",
+            "templateCategory",
+            "selectedComponentExtras",
         }
         if self.config.entity_kind == "invitation":
             customer_specific_fields.update({"guests", "rsvpResponses", "personalizedMessages"})
@@ -493,6 +603,9 @@ class CustomerProjectService:
             "id": document_id,
             "title": base_snapshot["title"],
             "slug": slugify(f"{base_snapshot['slug']}-{document_id[-6:]}"),
+            "productType": base_snapshot["productType"],
+            "planTier": base_snapshot["planTier"],
+            "templateCategory": base_snapshot["templateCategory"],
             "styles": deepcopy(base_snapshot.get("styles", {})),
             "layout": deepcopy(base_snapshot.get("layout", {})),
             "blocks": deepcopy(base_snapshot.get("blocks", [])),
@@ -501,6 +614,7 @@ class CustomerProjectService:
             "metadata": deepcopy(base_snapshot.get("metadata", {})),
             "templateId": template["id"],
             "templateSnapshotId": template_snapshot["id"],
+            "selectedComponentExtras": deepcopy(base_snapshot.get("selectedComponentExtras", [])),
             "customerData": payload.customerData.model_dump(mode="json"),
             "customerStatus": "draft",
             "payment": default_payment(),
@@ -520,6 +634,7 @@ class CustomerProjectService:
 
         append_status_history(document, "customerStatus", None, "created_from_template")
         document = normalize_document(document, "customerStatus")
+        self.commercial_rules.validate_document(document)
         document["seo"] = deepcopy(base_snapshot.get("seo", {}))
         logger.info("Customer project created | collection=%s id=%s template=%s", self.config.collection, document["id"], template["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
@@ -577,6 +692,12 @@ class CustomerProjectService:
                 "id": current["id"],
                 "templateId": current["templateId"],
                 "templateSnapshotId": current["templateSnapshotId"],
+                "productType": normalize_product_type(current.get("productType"), default="invitation" if self.config.entity_kind == "invitation" else "website"),
+                "planTier": normalize_plan_tier(current.get("planTier"), default=DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE[current.get("productType", "website")]),
+                "templateCategory": normalize_template_category(
+                    current.get("templateCategory"),
+                    product_type=normalize_product_type(current.get("productType"), default="invitation" if self.config.entity_kind == "invitation" else "website"),
+                ),
                 "publicSlug": public_slug,
                 "customerStatus": current["customerStatus"],
                 "payment": current.get("payment", default_payment()),
@@ -588,6 +709,7 @@ class CustomerProjectService:
             }
         )
         document = normalize_document(document, "customerStatus")
+        self.commercial_rules.validate_document(document)
         logger.info("Customer project updated | collection=%s id=%s", self.config.collection, project_id)
         return self.repository.replace_document(
             self.config.collection,
@@ -632,6 +754,7 @@ class CustomerProjectService:
             append_status_history(document, "customerStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "customerStatus")
+        self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": project_id}) + 1
         snapshot = {
@@ -688,6 +811,9 @@ class CustomerProjectService:
             "title": document["title"],
             "slug": document["slug"],
             "publicSlug": document.get("publicSlug"),
+            "productType": document["productType"],
+            "planTier": document["planTier"],
+            "templateCategory": document["templateCategory"],
             "customerStatus": "published",
             "styles": deepcopy(document.get("styles", {})),
             "layout": deepcopy(document.get("layout", {})),
@@ -699,6 +825,7 @@ class CustomerProjectService:
             "templateSnapshotId": document["templateSnapshotId"],
             "customerData": deepcopy(document.get("customerData", default_customer_data())),
             "payment": deepcopy(document.get("payment", default_payment())),
+            "selectedComponentExtras": deepcopy(document.get("selectedComponentExtras", [])),
             "version": version,
             "publishedAt": now,
         }

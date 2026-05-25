@@ -1,10 +1,18 @@
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from app.core.catalog import (
+    DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE,
+    DEFAULT_TEMPLATE_CATEGORY_BY_PRODUCT_TYPE,
+    normalize_plan_tier,
+    normalize_product_type,
+    normalize_template_category,
+    normalize_variant_level,
+)
 from app.core.errors import NuvlyError
+from app.core.utils import slugify
+from app.modules.domain.block_registry import BLOCK_REGISTRY
 from app.modules.domain.defaults import default_main_page, default_page_source
-from app.modules.experiences.registry import BLOCK_REGISTRY
-from app.modules.experiences.utils import slugify
 
 
 NON_INDEXABLE_STATUSES = {
@@ -243,7 +251,22 @@ def _sync_pages_and_legacy_fields(normalized: Dict[str, Any], pages: List[Dict[s
 def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:
     normalized = deepcopy(document)
     normalized["slug"] = slugify(normalized.get("slug") or normalized.get("title", ""))
+    default_product_type = "invitation" if normalized.get("experienceType") == "invitation" else "website"
+    normalized["productType"] = normalize_product_type(normalized.get("productType"), default=default_product_type)
+    normalized["planTier"] = normalize_plan_tier(
+        normalized.get("planTier"),
+        default=DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE[normalized["productType"]],
+    )
+    normalized["templateCategory"] = normalize_template_category(
+        normalized.get("templateCategory"),
+        product_type=normalized["productType"],
+    )
     normalized["metadata"] = normalized.get("metadata") or {}
+    normalized["metadata"]["level"] = normalize_variant_level(normalized["metadata"].get("level"))
+    normalized["selectedComponentExtras"] = normalized.get("selectedComponentExtras") or []
+    normalized["metadata"].setdefault("templateCategory", normalized["templateCategory"])
+    normalized["metadata"].setdefault("planTier", normalized["planTier"])
+    normalized["metadata"].setdefault("productType", normalized["productType"])
     pages = _normalize_pages(normalized)
     _sync_pages_and_legacy_fields(normalized, pages)
 

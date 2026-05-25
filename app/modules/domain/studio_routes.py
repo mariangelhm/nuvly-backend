@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Query
 
+from app.core.catalog import VariantLevel
 from app.modules.domain.schemas import (
     InvitationTemplateCreate,
     InvitationTemplateResponse,
@@ -33,7 +34,7 @@ def list_invitation_templates(
     skip: int = Query(default=0, ge=0),
     templateStatus: TemplateStatus | None = Query(default=None),
     category: str | None = Query(default=None),
-    level: str | None = Query(default=None),
+    level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
     return invitation_service.list(limit, skip, templateStatus, category, level, catalogVisible)
@@ -75,7 +76,7 @@ def list_website_templates(
     skip: int = Query(default=0, ge=0),
     templateStatus: TemplateStatus | None = Query(default=None),
     category: str | None = Query(default=None),
-    level: str | None = Query(default=None),
+    level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
     return website_service.list(limit, skip, templateStatus, category, level, catalogVisible)

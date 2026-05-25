@@ -1,5 +1,7 @@
 from copy import deepcopy
 
+from app.core.catalog import DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE, DEFAULT_TEMPLATE_CATEGORY_BY_PRODUCT_TYPE
+
 
 def default_page_source() -> dict:
     return {
@@ -34,7 +36,7 @@ def default_metadata(entity_kind: str) -> dict:
         "coverImage": "",
         "badge": "",
         "featured": False,
-        "level": "basic",
+        "level": "core",
         "basePrice": 0,
         "tags": [],
         "catalogVisible": False,
@@ -108,11 +110,15 @@ def default_website_customer_fields() -> dict:
 
 
 def default_template_document(entity_kind: str, title: str, slug: str, now: str, document_id: str) -> dict:
+    product_type = "invitation" if entity_kind == "invitation" else "website"
     data: dict = {
         "id": document_id,
         "title": title,
         "slug": slug,
         "experienceType": "invitation" if entity_kind == "invitation" else "web",
+        "productType": product_type,
+        "planTier": DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE[product_type],
+        "templateCategory": DEFAULT_TEMPLATE_CATEGORY_BY_PRODUCT_TYPE[product_type],
         "styles": {
             "themeId": None,
             "colors": {},
@@ -127,6 +133,7 @@ def default_template_document(entity_kind: str, title: str, slug: str, now: str,
             "noIndex": True,
         },
         "metadata": default_metadata(entity_kind),
+        "selectedComponentExtras": [],
         "templateStatus": "draft",
         "statusHistory": [],
         "publishedSnapshotId": None,

@@ -2,11 +2,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, VariantLevel
 
-ProductType = Literal["website", "invitation"]
-PlanTier = Literal["essential", "plus", "pro", "custom"]
 CurrencyCode = Literal["CLP"]
 PriceUnit = Literal["component"]
+CatalogVariantStatus = Literal["included", "extra", "blocked_by_plan", "blocked_by_category", "inactive"]
+SummaryVariantStatus = Literal["included", "extra", "blocked"]
 
 
 class PricingPlanBase(BaseModel):
@@ -44,22 +45,24 @@ class PricingComponentVariant(BaseModel):
     variantCode: str = Field(min_length=1, max_length=160)
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
+    variantTier: VariantLevel
     active: bool = True
+    includedInPlans: List[PlanTier] = Field(default_factory=list)
+    canBeExtraInPlans: List[PlanTier] = Field(default_factory=list)
+    extraPrice: int = Field(default=0, ge=0)
+    currency: CurrencyCode = "CLP"
+    sortOrder: int = Field(default=1, ge=0)
     model_config = ConfigDict(extra="allow")
 
 
 class PricingComponentBase(BaseModel):
     componentCode: str = Field(min_length=1, max_length=160)
     productType: ProductType
+    categoryCode: str = Field(min_length=1, max_length=160)
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
     active: bool = True
     variants: List[PricingComponentVariant] = Field(default_factory=list)
-    includedInPlans: List[PlanTier] = Field(default_factory=list)
-    canBeExtraInPlans: List[PlanTier] = Field(default_factory=list)
-    extraPrice: int = Field(ge=0)
-    currency: CurrencyCode = "CLP"
-    unit: PriceUnit = "component"
     sortOrder: int = Field(default=1, ge=0)
     model_config = ConfigDict(extra="allow")
 
@@ -80,21 +83,31 @@ class PricingVariantActiveUpdate(BaseModel):
     active: bool
 
 
+class PricingVariantUpdate(PricingComponentVariant):
+    pass
+
+
 class PricingComponentResponse(PricingComponentBase):
     id: str
     createdAt: str
     updatedAt: str
 
 
-class PricingCatalogSummary(BaseModel):
-    plans: List[PricingPlanResponse] = Field(default_factory=list)
-    components: List[PricingComponentResponse] = Field(default_factory=list)
-
-
 class PricingSummaryMatrixCell(BaseModel):
-    status: Literal["included", "extra", "blocked"]
+    status: SummaryVariantStatus
     label: str
     extraPrice: Optional[int] = None
+
+
+class PricingSummaryVariant(BaseModel):
+    variantCode: str
+    name: str
+    description: str = ""
+    variantTier: VariantLevel
+    active: bool = True
+    extraPrice: int = 0
+    currency: CurrencyCode = "CLP"
+    matrix: Dict[str, PricingSummaryMatrixCell] = Field(default_factory=dict)
 
 
 class PricingSummaryPlan(BaseModel):
@@ -112,12 +125,11 @@ class PricingSummaryPlan(BaseModel):
 class PricingSummaryComponent(BaseModel):
     id: str
     componentCode: str
+    categoryCode: str
     name: str
     description: str
     active: bool
-    variantsCount: int
-    activeVariantsCount: int
-    matrix: Dict[str, PricingSummaryMatrixCell] = Field(default_factory=dict)
+    variants: List[PricingSummaryVariant] = Field(default_factory=list)
 
 
 class PricingSummaryResponse(BaseModel):
@@ -126,11 +138,100 @@ class PricingSummaryResponse(BaseModel):
     components: List[PricingSummaryComponent] = Field(default_factory=list)
 
 
+class TemplateCategoryBase(BaseModel):
+    productType: ProductType
+    categoryCode: TemplateCategoryCode
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+    active: bool = True
+    sortOrder: int = Field(default=1, ge=0)
+    allowedComponentCodes: List[str] = Field(default_factory=list)
+
+
+class TemplateCategoryCreate(TemplateCategoryBase):
+    pass
+
+
+class TemplateCategoryUpdate(TemplateCategoryBase):
+    pass
+
+
+class TemplateCategoryActiveUpdate(BaseModel):
+    active: bool
+
+
+class TemplateCategoryResponse(TemplateCategoryBase):
+    id: str
+    createdAt: str
+    updatedAt: str
+
+
+class CatalogComponentVariantResponse(BaseModel):
+    variantCode: str
+    name: str
+    description: str = ""
+    variantTier: VariantLevel
+    status: CatalogVariantStatus
+    active: bool = True
+    extraPrice: int = 0
+    currency: CurrencyCode = "CLP"
+
+
+class CatalogComponentResponse(BaseModel):
+    componentCode: str
+    categoryCode: str
+    name: str
+    description: str = ""
+    active: bool = True
+    blockedByCategory: bool
+    variants: List[CatalogComponentVariantResponse] = Field(default_factory=list)
+
+
+class CatalogComponentsResponse(BaseModel):
+    productType: ProductType
+    templateCategory: TemplateCategoryCode
+    planTier: PlanTier
+    categories: List[TemplateCategoryResponse] = Field(default_factory=list)
+    components: List[CatalogComponentResponse] = Field(default_factory=list)
+
+
+class SelectedComponentExtraInput(BaseModel):
+    componentCode: str = Field(min_length=1, max_length=160)
+    variantCode: str = Field(min_length=1, max_length=160)
+
+
+class PricingCalculateRequest(BaseModel):
+    productType: ProductType
+    planTier: PlanTier
+    templateCategory: TemplateCategoryCode
+    selectedComponentExtras: List[SelectedComponentExtraInput] = Field(default_factory=list)
+    selectedExtras: List[str] = Field(default_factory=list)
+    durationMonths: int = Field(default=12, ge=1)
+
+
+class PricingBreakdownItem(BaseModel):
+    code: str
+    label: str
+    type: Literal["plan", "component_extra", "general_extra"]
+    amount: int
+
+
+class PricingCalculateResponse(BaseModel):
+    currency: CurrencyCode
+    basePrice: int
+    componentExtrasTotal: int
+    extrasTotal: int
+    total: int
+    breakdown: List[PricingBreakdownItem] = Field(default_factory=list)
+
+
 class PricingSeedStats(BaseModel):
     insertedPlans: int = 0
     insertedComponents: int = 0
+    insertedTemplateCategories: int = 0
     skippedPlans: int = 0
     skippedComponents: int = 0
+    skippedTemplateCategories: int = 0
     model_config = ConfigDict(extra="allow")
 
 

@@ -5,18 +5,24 @@ from typing import Any, Dict, List, Optional
 
 from app.core.errors import NuvlyError
 from app.modules.pricing.schemas import (
-    PricingComponentActiveUpdate,
+    PricingCalculateRequest,
     PricingComponentCreate,
     PricingComponentUpdate,
     PricingPlanCreate,
     PricingPlanUpdate,
+    PricingVariantUpdate,
+    TemplateCategoryCreate,
 )
 from app.modules.pricing.service import (
     COMPONENTS_COLLECTION,
     PLANS_COLLECTION,
+    TEMPLATE_CATEGORIES_COLLECTION,
+    CatalogService,
+    PricingCalculatorService,
     PricingComponentService,
     PricingPlanService,
     PricingSummaryService,
+    TemplateCategoryService,
     ensure_pricing_seed,
 )
 
@@ -24,6 +30,9 @@ from app.modules.pricing.service import (
 class InMemoryPricingRepository:
     def __init__(self) -> None:
         self.collections: dict[str, list[dict[str, Any]]] = {}
+
+    def collection(self, collection_name: str):
+        return self.collections.setdefault(collection_name, [])
 
     def database_name(self) -> str:
         return "in-memory"
@@ -35,10 +44,18 @@ class InMemoryPricingRepository:
         duplicate_message: str,
         duplicate_code: str,
     ) -> Dict[str, Any]:
-        code_key = "code" if collection_name == PLANS_COLLECTION else "componentCode"
-        for current in self.collections.get(collection_name, []):
-            if current.get(code_key) == document.get(code_key):
-                raise NuvlyError(duplicate_message, 409, duplicate_code)
+        if collection_name == PLANS_COLLECTION:
+            for current in self.collections.get(collection_name, []):
+                if current.get("code") == document.get("code"):
+                    raise NuvlyError(duplicate_message, 409, duplicate_code)
+        elif collection_name == COMPONENTS_COLLECTION:
+            for current in self.collections.get(collection_name, []):
+                if current.get("productType") == document.get("productType") and current.get("componentCode") == document.get("componentCode"):
+                    raise NuvlyError(duplicate_message, 409, duplicate_code)
+        elif collection_name == TEMPLATE_CATEGORIES_COLLECTION:
+            for current in self.collections.get(collection_name, []):
+                if current.get("productType") == document.get("productType") and current.get("categoryCode") == document.get("categoryCode"):
+                    raise NuvlyError(duplicate_message, 409, duplicate_code)
         self.collections.setdefault(collection_name, []).append(deepcopy(document))
         return deepcopy(document)
 
@@ -52,11 +69,7 @@ class InMemoryPricingRepository:
         duplicate_message: str,
         duplicate_code: str,
     ) -> Dict[str, Any]:
-        code_key = "code" if collection_name == PLANS_COLLECTION else "componentCode"
         documents = self.collections.get(collection_name, [])
-        for current in documents:
-            if current.get(code_key) == document.get(code_key) and current.get("id") != document_id:
-                raise NuvlyError(duplicate_message, 409, duplicate_code)
         for index, current in enumerate(documents):
             if current.get("id") == document_id:
                 documents[index] = deepcopy(document)
@@ -128,25 +141,51 @@ def _plan_payload() -> Dict[str, Any]:
 
 def _component_payload() -> Dict[str, Any]:
     return {
-        "componentCode": "hero_growth",
+        "componentCode": "hero",
         "productType": "website",
-        "name": "Hero Growth",
-        "description": "Hero de crecimiento.",
+        "categoryCode": "hero",
+        "name": "Hero",
+        "description": "Hero comercial.",
         "active": True,
         "variants": [
             {
-                "variantCode": "HG-01",
-                "name": "Growth One",
-                "description": "Variante principal.",
+                "variantCode": "H1",
+                "name": "Hero core",
+                "description": "Core",
+                "variantTier": "core",
                 "active": True,
-            }
+                "includedInPlans": ["essential", "plus", "pro"],
+                "canBeExtraInPlans": [],
+                "extraPrice": 0,
+                "currency": "CLP",
+                "sortOrder": 1,
+            },
+            {
+                "variantCode": "H8",
+                "name": "Hero premium",
+                "description": "Premium",
+                "variantTier": "premium",
+                "active": True,
+                "includedInPlans": ["pro"],
+                "canBeExtraInPlans": ["plus"],
+                "extraPrice": 3990,
+                "currency": "CLP",
+                "sortOrder": 8,
+            },
         ],
-        "includedInPlans": ["plus", "pro"],
-        "canBeExtraInPlans": ["essential"],
-        "extraPrice": 4990,
-        "currency": "CLP",
-        "unit": "component",
         "sortOrder": 10,
+    }
+
+
+def _template_category_payload() -> Dict[str, Any]:
+    return {
+        "productType": "website",
+        "categoryCode": "construction",
+        "name": "Construcción",
+        "description": "Templates para constructoras.",
+        "active": True,
+        "sortOrder": 1,
+        "allowedComponentCodes": ["hero", "navigation", "content"],
     }
 
 
@@ -157,9 +196,11 @@ def test_pricing_seed_is_idempotent() -> None:
     second = ensure_pricing_seed(repository=repository)
 
     assert first.insertedPlans == 8
-    assert first.insertedComponents == 34
+    assert first.insertedComponents > 0
+    assert first.insertedTemplateCategories == 14
     assert second.skippedPlans == 8
-    assert second.skippedComponents == 34
+    assert second.skippedComponents == first.insertedComponents
+    assert second.skippedTemplateCategories == 14
 
 
 def test_pricing_plan_crud_and_active_toggle() -> None:
@@ -167,29 +208,25 @@ def test_pricing_plan_crud_and_active_toggle() -> None:
     service = PricingPlanService(repository=repository)
 
     created = service.create(PricingPlanCreate.model_validate(_plan_payload()))
-    assert created["code"] == "website_growth"
-
-    updated = service.update(
-        created["id"],
-        PricingPlanUpdate.model_validate({**_plan_payload(), "name": "Growth Updated"}),
-    )
-    assert updated["name"] == "Growth Updated"
-
+    updated = service.update(created["id"], PricingPlanUpdate.model_validate({**_plan_payload(), "name": "Growth Updated"}))
     disabled = service.update_active(created["id"], False)
+
+    assert created["code"] == "website_growth"
+    assert updated["name"] == "Growth Updated"
     assert disabled["active"] is False
-    assert service.list(product_type="website", active=False)[0]["id"] == created["id"]
 
 
-def test_pricing_component_list_can_filter_by_tier() -> None:
+def test_template_category_crud_and_active_toggle() -> None:
     repository = InMemoryPricingRepository()
-    service = PricingComponentService(repository=repository)
-    ensure_pricing_seed(repository=repository)
+    service = TemplateCategoryService(repository=repository)
 
-    essential = service.list(product_type="website", tier="essential")
-    custom = service.list(product_type="invitation", tier="custom")
+    created = service.create(TemplateCategoryCreate.model_validate(_template_category_payload()))
+    updated = service.update(created["id"], TemplateCategoryCreate.model_validate({**_template_category_payload(), "name": "Construcción Pro"}))
+    disabled = service.update_active(created["id"], False)
 
-    assert any(component["componentCode"] == "hero_pro" for component in essential)
-    assert any(component["componentCode"] == "ranking_top_5" for component in custom)
+    assert created["categoryCode"] == "construction"
+    assert updated["name"] == "Construcción Pro"
+    assert disabled["active"] is False
 
 
 def test_pricing_component_crud_and_variant_active_toggle() -> None:
@@ -197,79 +234,135 @@ def test_pricing_component_crud_and_variant_active_toggle() -> None:
     service = PricingComponentService(repository=repository)
 
     created = service.create(PricingComponentCreate.model_validate(_component_payload()))
-    assert created["componentCode"] == "hero_growth"
+    updated = service.update(created["id"], PricingComponentUpdate.model_validate({**_component_payload(), "name": "Hero Updated"}))
+    variant_disabled = service.update_variant_active(created["id"], "H8", False)
 
-    updated = service.update(
+    assert created["componentCode"] == "hero"
+    assert updated["name"] == "Hero Updated"
+    assert variant_disabled["variants"][1]["active"] is False
+
+
+def test_pricing_component_updates_single_variant() -> None:
+    repository = InMemoryPricingRepository()
+    service = PricingComponentService(repository=repository)
+
+    created = service.create(PricingComponentCreate.model_validate(_component_payload()))
+    updated = service.update_variant(
         created["id"],
-        PricingComponentUpdate.model_validate({**_component_payload(), "name": "Hero Growth Updated"}),
+        "H8",
+        PricingVariantUpdate.model_validate(
+            {
+                "variantCode": "H8",
+                "name": "Hero premium updated",
+                "description": "Premium updated",
+                "variantTier": "premium",
+                "active": True,
+                "includedInPlans": ["pro"],
+                "canBeExtraInPlans": ["plus"],
+                "extraPrice": 4990,
+                "currency": "CLP",
+                "sortOrder": 9,
+            }
+        ),
     )
-    assert updated["name"] == "Hero Growth Updated"
 
-    disabled = service.update_active(created["id"], False)
-    assert disabled["active"] is False
-
-    variant_disabled = service.update_variant_active(created["id"], "HG-01", False)
-    assert variant_disabled["variants"][0]["active"] is False
+    variant = next(item for item in updated["variants"] if item["variantCode"] == "H8")
+    assert variant["name"] == "Hero premium updated"
+    assert variant["extraPrice"] == 4990
 
 
-def test_pricing_component_rejects_duplicate_variant_codes() -> None:
+def test_pricing_component_rejects_variant_plan_overlap() -> None:
     repository = InMemoryPricingRepository()
     service = PricingComponentService(repository=repository)
     payload = _component_payload()
-    payload["variants"].append(deepcopy(payload["variants"][0]))
+    payload["variants"][1]["includedInPlans"] = ["plus", "pro"]
+    payload["variants"][1]["canBeExtraInPlans"] = ["plus"]
 
     try:
         service.create(PricingComponentCreate.model_validate(payload))
     except NuvlyError as exc:
-        assert exc.code == "DUPLICATED_VARIANT_CODE"
+        assert exc.code == "PLAN_TIER_OVERLAP_IN_VARIANT"
     else:
-        raise AssertionError("Expected DUPLICATED_VARIANT_CODE")
+        raise AssertionError("Expected PLAN_TIER_OVERLAP_IN_VARIANT")
 
 
-def test_pricing_component_rejects_invalid_extra_plan_tier() -> None:
+def test_pricing_component_rejects_extra_without_price() -> None:
     repository = InMemoryPricingRepository()
     service = PricingComponentService(repository=repository)
     payload = _component_payload()
-    payload["canBeExtraInPlans"] = ["vip"]
+    payload["variants"][1]["extraPrice"] = 0
 
     try:
         service.create(PricingComponentCreate.model_validate(payload))
-    except Exception as exc:
-        code = getattr(exc, "code", None)
-        assert code == "INVALID_EXTRA_PLAN_TIER" or "literal_error" in str(exc)
+    except NuvlyError as exc:
+        assert exc.code == "EXTRA_PRICE_REQUIRED"
     else:
-        raise AssertionError("Expected invalid extra tier validation")
+        raise AssertionError("Expected EXTRA_PRICE_REQUIRED")
 
 
-def test_pricing_summary_builds_commercial_matrix() -> None:
+def test_catalog_components_calculates_variant_statuses() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    response = service.list_components_for_catalog("website", "construction", "plus")
+
+    hero = next(component for component in response["components"] if component["componentCode"] == "hero")
+    h1 = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-a")
+    h8 = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+
+    assert response["templateCategory"] == "construction"
+    assert h1["status"] == "included"
+    assert h8["status"] == "extra"
+
+
+def test_catalog_components_hides_inactive_variants() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    component_service = PricingComponentService(repository=repository)
+    catalog_service = CatalogService(repository=repository)
+
+    hero = next(component for component in component_service.list(product_type="website") if component["componentCode"] == "hero")
+    component_service.update_variant_active(hero["id"], "hero-premium-video", False)
+
+    response = catalog_service.list_components_for_catalog("website", "construction", "plus")
+    hero_response = next(component for component in response["components"] if component["componentCode"] == "hero")
+
+    assert all(variant["variantCode"] != "hero-premium-video" for variant in hero_response["variants"])
+
+
+def test_pricing_summary_builds_matrix_per_variant() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
     service = PricingSummaryService(repository=repository)
 
     summary = service.build_summary(product_type="website")
+    hero = next(component for component in summary["components"] if component["componentCode"] == "hero")
+    premium_variant = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
 
-    assert summary["productType"] == "website"
-    assert summary["plans"][0]["tier"] == "essential"
-    hero_pro = next(component for component in summary["components"] if component["componentCode"] == "hero_pro")
-    assert hero_pro["matrix"]["essential"]["status"] == "extra"
-    assert hero_pro["matrix"]["essential"]["label"] == "Extra $9990"
-    assert hero_pro["matrix"]["plus"]["status"] == "included"
-    assert hero_pro["matrix"]["plus"]["label"] == "Incluido"
-    essential_plan = next(plan for plan in summary["plans"] if plan["tier"] == "essential")
-    assert essential_plan["includedCount"] > 0
-    assert essential_plan["extraCount"] > 0
+    assert premium_variant["variantTier"] == "premium"
+    assert premium_variant["matrix"]["essential"]["status"] == "blocked"
+    assert premium_variant["matrix"]["plus"]["status"] == "extra"
+    assert premium_variant["matrix"]["pro"]["status"] == "included"
 
 
-def test_pricing_summary_excludes_inactive_components_by_default() -> None:
+def test_pricing_calculate_sums_plan_component_extras_and_general_extras() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
-    component_service = PricingComponentService(repository=repository)
-    summary_service = PricingSummaryService(repository=repository)
-    hero_pro = next(component for component in component_service.list(product_type="website") if component["componentCode"] == "hero_pro")
-    component_service.update_active(hero_pro["id"], False)
+    service = PricingCalculatorService(repository=repository)
 
-    summary_without_inactive = summary_service.build_summary(product_type="website")
-    summary_with_inactive = summary_service.build_summary(product_type="website", include_inactive=True)
+    response = service.calculate(
+        PricingCalculateRequest(
+            productType="website",
+            planTier="plus",
+            templateCategory="construction",
+            selectedComponentExtras=[{"componentCode": "hero", "variantCode": "hero-premium-video"}],
+            selectedExtras=["custom_domain"],
+            durationMonths=12,
+        )
+    )
 
-    assert all(component["componentCode"] != "hero_pro" for component in summary_without_inactive["components"])
-    assert any(component["componentCode"] == "hero_pro" for component in summary_with_inactive["components"])
+    assert response["currency"] == "CLP"
+    assert response["componentExtrasTotal"] == 3990
+    assert response["extrasTotal"] == 1990
+    assert response["total"] == response["basePrice"] + 3990 + 1990

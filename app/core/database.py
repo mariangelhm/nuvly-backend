@@ -39,21 +39,16 @@ def _drop_index_if_exists(collection, index_name: str) -> None:
 
 def create_indexes() -> None:
     db = get_database()
-    db.experiences.create_index([("slug", ASCENDING), ("experienceType", ASCENDING)], unique=True)
-    db.experiences.create_index([("status", ASCENDING)])
-    db.experiences.create_index([("experienceType", ASCENDING)])
-    db.experiences.create_index([("updatedAt", ASCENDING)])
-    db.experience_snapshots.create_index([("experienceId", ASCENDING)])
-    db.experience_snapshots.create_index([("experienceId", ASCENDING), ("version", ASCENDING)], unique=True)
-    db.experience_snapshots.create_index([("experienceType", ASCENDING), ("slug", ASCENDING)])
     db.invitation_templates.create_index([("slug", ASCENDING)], unique=True)
     db.invitation_templates.create_index([("templateStatus", ASCENDING)])
     db.invitation_templates.create_index([("updatedAt", ASCENDING)])
     db.invitation_templates.create_index([("metadata.catalogVisible", ASCENDING)])
+    db.invitation_templates.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
     db.website_templates.create_index([("slug", ASCENDING)], unique=True)
     db.website_templates.create_index([("templateStatus", ASCENDING)])
     db.website_templates.create_index([("updatedAt", ASCENDING)])
     db.website_templates.create_index([("metadata.catalogVisible", ASCENDING)])
+    db.website_templates.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
     _drop_index_if_exists(db.customer_invitations, "slug_1")
     _drop_index_if_exists(db.customer_websites, "slug_1")
     _drop_index_if_exists(db.customer_invitations, "publicSlug_1")
@@ -66,6 +61,7 @@ def create_indexes() -> None:
     )
     db.customer_invitations.create_index([("customerStatus", ASCENDING)])
     db.customer_invitations.create_index([("updatedAt", ASCENDING)])
+    db.customer_invitations.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
     db.customer_websites.create_index([("slug", ASCENDING)])
     db.customer_websites.create_index(
         [("publicSlug", ASCENDING)],
@@ -74,6 +70,7 @@ def create_indexes() -> None:
     )
     db.customer_websites.create_index([("customerStatus", ASCENDING)])
     db.customer_websites.create_index([("updatedAt", ASCENDING)])
+    db.customer_websites.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING)])
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING), ("version", ASCENDING)], unique=True)
     db.invitation_template_snapshots.create_index([("slug", ASCENDING)])
@@ -99,9 +96,13 @@ def create_indexes() -> None:
     db.pricing_plans.create_index([("productType", ASCENDING), ("active", ASCENDING)])
     db.pricing_plans.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])
     db.pricing_components.create_index([("id", ASCENDING)], unique=True)
-    db.pricing_components.create_index([("componentCode", ASCENDING)], unique=True)
+    _drop_index_if_exists(db.pricing_components, "componentCode_1")
+    db.pricing_components.create_index([("productType", ASCENDING), ("componentCode", ASCENDING)], unique=True)
     db.pricing_components.create_index([("productType", ASCENDING), ("active", ASCENDING)])
     db.pricing_components.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])
+    db.template_categories.create_index([("id", ASCENDING)], unique=True)
+    db.template_categories.create_index([("productType", ASCENDING), ("categoryCode", ASCENDING)], unique=True)
+    db.template_categories.create_index([("productType", ASCENDING), ("active", ASCENDING), ("sortOrder", ASCENDING)])
 
 
 def ping_database() -> bool:

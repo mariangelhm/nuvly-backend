@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
+from app.core.catalog import VariantLevel
 from app.modules.domain.schemas import PublicTemplateCardResponse, SnapshotResponse
 from app.modules.domain.services import (
     INVITATION_TEMPLATE_CONFIG,
@@ -31,7 +32,7 @@ def list_public_invitation_templates(
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     category: str | None = Query(default=None),
-    level: str | None = Query(default=None),
+    level: VariantLevel | None = Query(default=None),
     tags: str | None = Query(default=None),
     eventType: str | None = Query(default=None),
 ):
@@ -48,7 +49,7 @@ def list_public_website_templates(
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     category: str | None = Query(default=None),
-    level: str | None = Query(default=None),
+    level: VariantLevel | None = Query(default=None),
     tags: str | None = Query(default=None),
     industry: str | None = Query(default=None),
 ):

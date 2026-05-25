@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, VariantLevel
 
 TemplateStatus = Literal["draft", "private_preview", "published", "unpublished", "archived"]
 CustomerStatus = Literal["draft", "temporary", "editing", "abandoned", "pending_payment", "payment_failed", "paid", "published", "cancelled"]
@@ -61,7 +62,7 @@ class Metadata(BaseModel):
     coverImage: str = ""
     badge: str = ""
     featured: bool = False
-    level: str = "basic"
+    level: VariantLevel = "core"
     basePrice: float = 0
     tags: List[str] = Field(default_factory=list)
     catalogVisible: bool = False
@@ -145,9 +146,18 @@ class ExperiencePage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class SelectedComponentExtra(BaseModel):
+    componentCode: str = Field(min_length=1, max_length=160)
+    variantCode: str = Field(min_length=1, max_length=160)
+    extraPrice: int = Field(default=0, ge=0)
+
+
 class InvitationTemplateCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    productType: ProductType = "invitation"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "wedding"
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
@@ -155,6 +165,7 @@ class InvitationTemplateCreate(BaseModel):
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     model_config = ConfigDict(extra="ignore")
 
 
@@ -162,18 +173,25 @@ class WebsiteTemplateCreate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     experienceType: Literal["web"] = "web"
+    productType: ProductType = "website"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "corporate"
     styles: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     blocks: Optional[List[WebsiteBlock]] = None
     pages: Optional[List[ExperiencePage]] = None
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     model_config = ConfigDict(extra="allow")
 
 
 class InvitationTemplateUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: str = Field(min_length=1, max_length=160)
+    productType: ProductType = "invitation"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "wedding"
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
@@ -181,6 +199,7 @@ class InvitationTemplateUpdate(BaseModel):
     seo: Optional[Seo] = None
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     model_config = ConfigDict(extra="ignore")
 
 
@@ -188,12 +207,16 @@ class WebsiteTemplateUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: str = Field(min_length=1, max_length=160)
     experienceType: Literal["web"] = "web"
+    productType: ProductType = "website"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "corporate"
     styles: Optional[Dict[str, Any]] = None
     layout: Optional[Dict[str, Any]] = None
     blocks: Optional[List[WebsiteBlock]] = None
     pages: Optional[List[ExperiencePage]] = None
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -233,6 +256,9 @@ class CustomerInvitationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
+    productType: ProductType = "invitation"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "wedding"
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
@@ -241,6 +267,7 @@ class CustomerInvitationUpdate(BaseModel):
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
     customerData: Optional[CustomerData] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     guests: Optional[List[Dict[str, Any]]] = None
     rsvpResponses: Optional[List[Dict[str, Any]]] = None
     personalizedMessages: Optional[List[Dict[str, Any]]] = None
@@ -251,6 +278,9 @@ class CustomerWebsiteUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)
     publicSlug: Optional[str] = Field(default=None, min_length=3, max_length=160)
+    productType: ProductType = "website"
+    planTier: PlanTier = "plus"
+    templateCategory: TemplateCategoryCode = "corporate"
     styles: Optional[Styles] = None
     layout: Optional[Layout] = None
     blocks: Optional[List[ExperienceBlock]] = None
@@ -259,6 +289,7 @@ class CustomerWebsiteUpdate(BaseModel):
     metadata: Optional[Metadata] = None
     websiteData: Optional[WebsiteData] = None
     customerData: Optional[CustomerData] = None
+    selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     leadForms: Optional[List[Dict[str, Any]]] = None
     formSubmissions: Optional[List[Dict[str, Any]]] = None
     customDomain: Optional[str] = None

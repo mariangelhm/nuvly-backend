@@ -11,6 +11,7 @@ from app.modules.domain.services import (
     WEBSITE_TEMPLATE_CONFIG,
     TemplateService,
 )
+from app.modules.pricing.service import ensure_pricing_seed
 
 
 def _get_nested(document: Dict[str, Any], dotted_key: str) -> Any:
@@ -153,6 +154,7 @@ def _invitation_payload(catalog_visible: bool = False) -> Dict[str, Any]:
 
 def test_publish_updates_template_status_and_public_list_ignores_catalog_visible() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))
@@ -178,6 +180,7 @@ def test_publish_updates_template_status_and_public_list_ignores_catalog_visible
 
 def test_public_get_by_slug_reads_current_published_snapshot_without_catalog_visible() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(INVITATION_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(InvitationTemplateCreate.model_validate(_invitation_payload(catalog_visible=False)))
@@ -192,6 +195,7 @@ def test_public_get_by_slug_reads_current_published_snapshot_without_catalog_vis
 
 def test_invitation_legacy_linked_pages_are_preserved_in_pages_snapshot() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(INVITATION_TEMPLATE_CONFIG, repository=repository)
     payload = _invitation_payload(catalog_visible=False)
     payload["metadata"]["linkedPages"] = [
@@ -225,6 +229,7 @@ def test_invitation_legacy_linked_pages_are_preserved_in_pages_snapshot() -> Non
 
 def test_public_list_includes_published_template_without_snapshot_and_logs(caplog) -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     caplog.set_level(logging.INFO)
 
@@ -254,6 +259,7 @@ def test_public_list_includes_published_template_without_snapshot_and_logs(caplo
 
 def test_public_list_filters_by_template_status_not_status_field() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))
@@ -276,6 +282,7 @@ def test_public_list_filters_by_template_status_not_status_field() -> None:
 
 def test_unpublished_template_is_hidden_from_public_catalog_and_detail() -> None:
     repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
 
     created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))

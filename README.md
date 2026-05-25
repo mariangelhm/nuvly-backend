@@ -2,7 +2,7 @@
 
 Backend MVP para el Studio de Nuvly.
 
-Este servicio guarda, valida, publica y sirve experiencias visuales para:
+Este servicio guarda, valida, publica y sirve templates y proyectos visuales para:
 
 - páginas web
 - invitaciones digitales
@@ -12,6 +12,13 @@ Modelo actual del Studio:
 - `pages[]` es la fuente principal de verdad para páginas editables.
 - `blocks` en raíz sigue existiendo por compatibilidad y refleja los bloques de la página primaria.
 - `metadata.linkedPages` se sigue exponiendo por compatibilidad y refleja las páginas `kind="linked"`.
+
+Conceptos oficiales actuales:
+
+- `type`: `website` | `invitation`
+- `plan tier`: `essential` | `plus` | `pro` | `custom`
+- `category`: por dominio de negocio, por ejemplo `construction`, `wedding`, `beauty`
+- `variant level`: `core` | `advanced` | `premium`
 
 La idea central es que el frontend **NO renderiza desde HTML guardado**. El frontend renderiza desde configuración estructurada:
 
@@ -87,19 +94,21 @@ nuvly-backend/
       database.py
       errors.py
       logging.py
+      utils.py
     modules/
-      health/
-        routes.py
-      experiences/
-        routes.py
-        service.py
+      domain/
+        customer_routes.py
+        public_routes.py
+        published_routes.py
+        studio_routes.py
+        services.py
         repository.py
         schemas.py
-        defaults.py
-        normalizer.py
-        registry.py
-        utils.py
-      published/
+      health/
+        routes.py
+      payments/
+        routes.py
+      pricing/
         routes.py
   requirements.txt
   .env.example
@@ -339,23 +348,9 @@ Por eso NO tendremos un backend distinto para webs y otro para invitaciones.
 
 Es la versión editable. Se guarda en la colección:
 
-```txt
-experiences
-```
-
----
-
 ## Snapshot publicado
 
-Un snapshot es una copia congelada de la experiencia al momento de publicar.
-
-Ejemplo:
-
-1. El usuario publica una invitación rosada.
-2. El backend crea un snapshot.
-3. El usuario sigue editando el draft y cambia a azul.
-4. La versión pública sigue rosada.
-5. Solo cambia cuando vuelve a publicar.
+Un snapshot es una copia congelada del template o proyecto al momento de publicar.
 
 Esto evita romper la versión pública con cambios a medias.
 
@@ -363,69 +358,21 @@ Esto evita romper la versión pública con cambios a medias.
 
 # Colecciones MongoDB
 
-## `experiences`
+Colecciones activas del backend:
 
-Guarda la versión editable actual.
+- `invitation_templates`
+- `website_templates`
+- `customer_invitations`
+- `customer_websites`
+- `invitation_template_snapshots`
+- `website_template_snapshots`
+- `customer_invitation_snapshots`
+- `customer_website_snapshots`
+- `payments`
+- `pricing_plans`
+- `pricing_components`
 
-Campos principales:
-
-```txt
-id
-title
-slug
-experienceType
-status
-presetId
-styles
-layout
-blocks
-seo
-metadata
-content
-publishedSnapshotId
-lastPublishedAt
-createdAt
-updatedAt
-```
-
-## `experience_snapshots`
-
-Guarda versiones publicadas inmutables.
-
-Campos principales:
-
-```txt
-id
-experienceId
-experienceType
-slug
-version
-snapshot
-createdAt
-publishedAt
-```
-
----
-
-# Estados editoriales
-
-```txt
-draft
-private_preview
-published
-archived
-```
-
-Reglas:
-
-- `draft`: editable, no público.
-- `private_preview`: futuro preview privado.
-- `published`: visible públicamente desde snapshot.
-- `archived`: no visible públicamente.
-
-Cuando una experiencia está en `draft`, `private_preview` o `archived`, el backend fuerza `seo.noIndex = true`.
-
-Cuando se publica, el backend fuerza `seo.noIndex = false`.
+Las colecciones legacy `experiences` y `experience_snapshots` ya no forman parte de la API ni del modelo actual.
 
 ---
 
@@ -437,176 +384,11 @@ Cuando se publica, el backend fuerza `seo.noIndex = false`.
 GET /api/health
 ```
 
-## Crear experiencia
+## Studio
 
-```http
-POST /api/experiences
-```
+El backend actual expone endpoints separados para templates de invitación, templates de website y proyectos de cliente.
 
-Body para web:
-
-```json
-{
-  "experienceType": "web",
-  "presetId": null,
-  "title": "Nueva web"
-}
-```
-
-Body para invitación:
-
-```json
-{
-  "experienceType": "invitation",
-  "presetId": null,
-  "title": "Boda Mari y José"
-}
-```
-
-## Listar experiencias
-
-```http
-GET /api/experiences?limit=20&skip=0
-```
-
-## Obtener experiencia editable
-
-```http
-GET /api/experiences/{experience_id}
-```
-
-## Guardar experiencia completa
-
-```http
-PUT /api/experiences/{experience_id}
-```
-
-Este MVP guarda el documento completo. No guarda parches pequeños todavía.
-
-Body conceptual:
-
-```json
-{
-  "title": "Buildframe Landing",
-  "slug": "buildframe-landing",
-  "experienceType": "web",
-  "status": "draft",
-  "presetId": null,
-  "styles": {
-    "themeId": "midnight",
-    "colors": {
-      "backgroundColor": "#07111d",
-      "surfaceColor": "#0f1729",
-      "textColor": "#eef5ff",
-      "accentColor": "#5fe4ff"
-    },
-    "typography": {
-      "headingFont": "Didot, serif",
-      "subtitleFont": "Georgia, serif",
-      "bodyFont": "Arial, sans-serif"
-    }
-  },
-  "layout": {
-    "sectionOrder": ["blk_nav", "blk_hero"]
-  },
-  "blocks": [
-    {
-      "id": "blk_nav",
-      "type": "navigation",
-      "variant": "N1-Overlay-Nav",
-      "enabled": true,
-      "order": 1,
-      "props": {
-        "title": "Buildframe",
-        "buttonLabel": "Solicitar propuesta"
-      },
-      "settings": {
-        "elementVisibility": {
-          "buttonLabel": true
-        }
-      }
-    },
-    {
-      "id": "blk_hero",
-      "type": "hero",
-      "variant": "H1-Centered",
-      "enabled": true,
-      "order": 2,
-      "props": {
-        "title": "Construimos espacios modernos",
-        "subtitle": "Landing para constructora"
-      },
-      "settings": {}
-    }
-  ],
-  "seo": {
-    "title": "Buildframe Landing",
-    "description": "Landing para constructora",
-    "noIndex": true
-  },
-  "metadata": {
-    "category": "landing",
-    "style": "corporativo",
-    "purpose": "captacion",
-    "catalogVisible": false,
-    "tags": []
-  },
-  "content": null
-}
-```
-
-## Publicar experiencia
-
-```http
-POST /api/experiences/{experience_id}/publish
-```
-
-Hace esto:
-
-1. obtiene la experiencia editable
-2. valida estructura
-3. normaliza bloques y layout
-4. crea snapshot inmutable
-5. marca la experiencia como `published`
-6. guarda `publishedSnapshotId`
-7. guarda `lastPublishedAt`
-8. devuelve el snapshot creado
-
-## Cambiar estado
-
-```http
-PATCH /api/experiences/{experience_id}/status
-```
-
-Body:
-
-```json
-{
-  "status": "archived"
-}
-```
-
-Si el estado enviado es `published`, internamente usa la lógica de publish.
-
-## Obtener experiencia pública
-
-```http
-GET /api/published/{experienceType}/{slug}
-```
-
-Ejemplos:
-
-```http
-GET /api/published/web/buildframe-landing
-```
-
-```http
-GET /api/published/invitation/boda-mari-y-jose
-```
-
-Este endpoint solo devuelve experiencias publicadas desde snapshot.
-
-La vista pública del frontend debe consumir este endpoint, no el draft editable.
+Revisa Swagger en `/api/docs` para el contrato vigente. Los endpoints legacy `/api/experiences/*` y `/api/published/{experienceType}/{slug}` fueron removidos.
 
 ---
 
@@ -614,10 +396,9 @@ La vista pública del frontend debe consumir este endpoint, no el draft editable
 
 El backend valida:
 
-- `experienceType`: solo `web` o `invitation`
-- `status`: solo `draft`, `private_preview`, `published`, `archived`
-- `type` válido por bloque
-- `variant` válida para ese `type`
+- `experienceType`: solo `web` o `invitation` en entidades vigentes
+- estados editoriales de templates y proyectos de cliente
+- estructura de `pages`, `blocks`, `layout`, `seo` y `metadata`
 - bloques singleton no duplicados
 - `order` normalizado
 - `layout.sectionOrder` reconstruido desde bloques
@@ -711,78 +492,22 @@ proof:
 
 # Primer flujo de prueba en Swagger
 
-## 1. Crear invitación
+Prueba el flujo vigente desde `/api/docs` con alguna de estas familias:
 
-```http
-POST /api/experiences
-```
-
-Body:
-
-```json
-{
-  "experienceType": "invitation",
-  "title": "Boda Mari y José",
-  "presetId": null
-}
-```
-
-Copia el `id` de la respuesta.
-
-## 2. Obtener invitación
-
-```http
-GET /api/experiences/{id}
-```
-
-## 3. Publicar
-
-```http
-POST /api/experiences/{id}/publish
-```
-
-## 4. Ver público
-
-El slug se genera desde el título. Para `Boda Mari y José`, el slug será:
-
-```txt
-boda-mari-y-jose
-```
-
-Endpoint:
-
-```http
-GET /api/published/invitation/boda-mari-y-jose
-```
+- `studio/invitation-templates`
+- `studio/website-templates`
+- `customers/invitations`
+- `customers/websites`
+- `public/invitation-templates`
+- `public/website-templates`
 
 ---
 
 # Integración con frontend
 
-El frontend debe consumir:
+El frontend debe integrarse con los endpoints de `studio`, `customers` y `public` definidos en Swagger.
 
-```txt
-POST /api/experiences
-GET /api/experiences/{id}
-PUT /api/experiences/{id}
-POST /api/experiences/{id}/publish
-PATCH /api/experiences/{id}/status
-GET /api/published/{experienceType}/{slug}
-```
-
-La vista editable usa:
-
-```txt
-GET /api/experiences/{id}
-```
-
-La vista pública usa:
-
-```txt
-GET /api/published/{experienceType}/{slug}
-```
-
-No usar el draft editable para render público.
+Los endpoints legacy de `experiences` y `published` ya no existen y no deben consumirse.
 
 ---
 
