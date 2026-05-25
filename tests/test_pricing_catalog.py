@@ -317,19 +317,23 @@ def test_catalog_components_calculates_variant_statuses() -> None:
     assert hero["name"] == "Hero"
     assert hero["description"] == ""
     assert hero["categoryCode"] == "hero"
+    assert hero["categoryLabel"] == "Construcción"
     assert hero["componentTier"] == "core"
     assert hero["active"] is True
     assert hero["allowedByCategory"] is True
     assert hero["status"] == "included"
     assert hero["label"] == "Disponible"
+    assert hero["lockLabel"] == ""
     assert hero["locked"] is False
     assert hero["sortOrder"] == 2
     assert h1["status"] == "included"
     assert h1["label"] == "Incluido"
+    assert h1["lockLabel"] == ""
     assert h1["locked"] is False
     assert h1["sortOrder"] == 1
-    assert h8["status"] == "blocked_by_plan"
+    assert h8["status"] == "blocked"
     assert h8["label"] == "No disponible para este plan"
+    assert h8["lockLabel"] == "No disponible para este plan"
     assert h8["locked"] is True
 
 
@@ -348,6 +352,7 @@ def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
 
     assert premium_variant["status"] == "inactive"
     assert premium_variant["label"] == "Inactivo"
+    assert premium_variant["lockLabel"] == "Inactivo"
     assert premium_variant["locked"] is True
 
 
@@ -368,23 +373,27 @@ def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> Non
     branches = next(component for component in by_plan["components"] if component["componentCode"] == "branches")
     branches_variant = branches["variants"][0]
 
-    assert premium["status"] == "blocked_by_plan"
+    assert premium["status"] == "blocked"
     assert premium["label"] == "No disponible para este plan"
+    assert premium["lockLabel"] == "No disponible para este plan"
     assert premium["locked"] is True
     assert premium["lockReason"] == "Esta variante premium no está disponible en Essential."
-    assert lead_form["status"] == "blocked_by_plan"
+    assert lead_form["status"] == "blocked"
     assert lead_form["locked"] is True
-    assert lead_form_variant["status"] == "blocked_by_component_plan"
+    assert lead_form_variant["status"] == "blocked"
     assert lead_form_variant["label"] == "Componente no disponible para este plan"
-    assert branches["status"] == "blocked_by_plan"
+    assert lead_form_variant["lockLabel"] == "Componente no disponible para este plan"
+    assert branches["status"] == "blocked"
     assert branches["label"] == "No disponible para este plan"
+    assert branches["lockLabel"] == "No disponible para este plan"
     assert branches["locked"] is True
     assert branches["lockReason"] == "Este componente no está disponible para el plan seleccionado."
-    assert branches_variant["status"] == "blocked_by_component_plan"
+    assert branches_variant["status"] == "blocked"
     assert projects["allowedByCategory"] is False
-    assert projects["status"] == "blocked_by_category"
-    assert project_variant["status"] == "blocked_by_category"
+    assert projects["status"] == "blocked"
+    assert project_variant["status"] == "blocked"
     assert project_variant["label"] == "No disponible para esta categoría"
+    assert project_variant["lockLabel"] == "No disponible para esta categoría"
     assert project_variant["locked"] is True
 
 

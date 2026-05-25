@@ -226,7 +226,7 @@ class CommercialRulesService:
                 component_allowed=component_code in allowed_component_codes,
                 component_active=component.get("active", True),
             )
-            component_status = component_availability["status"]
+            component_status = component_availability["rawStatus"]
             if component_status == "inactive":
                 raise NuvlyError("El componente seleccionado está inactivo.", 422, "COMPONENT_INACTIVE")
             if component_status == "blocked_by_category":
@@ -239,7 +239,7 @@ class CommercialRulesService:
                 plan_tier=plan_tier,
                 component_status=component_status,
             )
-            status = availability["status"]
+            status = availability["rawStatus"]
 
             if status == "inactive":
                 raise NuvlyError("La variante seleccionada esta inactiva.", 422, "VARIANT_INACTIVE")

@@ -249,43 +249,51 @@ def build_variant_catalog_state(
     component_status: str,
 ) -> Dict[str, Any]:
     if component_status == "inactive":
+        raw_status = "inactive"
         status = "inactive"
-        label = "Inactivo"
+        lock_label = "Inactivo"
         locked = True
         lock_reason = "El componente padre está inactivo."
     elif component_status == "blocked_by_category":
-        status = "blocked_by_category"
-        label = "No disponible para esta categoría"
+        raw_status = "blocked_by_category"
+        status = "blocked"
+        lock_label = "No disponible para esta categoría"
         locked = True
         lock_reason = "El componente padre no está disponible para la categoría seleccionada."
     elif component_status == "blocked_by_plan":
-        status = "blocked_by_component_plan"
-        label = "Componente no disponible para este plan"
+        raw_status = "blocked_by_component_plan"
+        status = "blocked"
+        lock_label = "Componente no disponible para este plan"
         locked = True
         lock_reason = "El componente padre está bloqueado para este plan."
     elif not variant.get("active", True):
+        raw_status = "inactive"
         status = "inactive"
-        label = "Inactivo"
+        lock_label = "Inactivo"
         locked = True
         lock_reason = "Esta variante está inactiva."
     elif is_tier_allowed_for_plan(variant["variantTier"], plan_tier):
+        raw_status = "included"
         status = "included"
-        label = "Incluido"
+        lock_label = ""
         locked = False
-        lock_reason = None
+        lock_reason = ""
     else:
         plan_label = str(plan_tier).capitalize()
-        status = "blocked_by_plan"
-        label = "No disponible para este plan"
+        raw_status = "blocked_by_plan"
+        status = "blocked"
+        lock_label = "No disponible para este plan"
         locked = True
         lock_reason = f"Esta variante {variant['variantTier']} no está disponible en {plan_label}."
 
     return {
+        "rawStatus": raw_status,
         "status": status,
-        "label": label,
+        "label": "Incluido" if status == "included" else ("Extra" if status == "extra" else lock_label),
+        "lockLabel": lock_label,
         "locked": locked,
         "lockReason": lock_reason,
-        "extraPrice": int(variant.get("extraPrice", 0) or 0),
+        "extraPrice": None if status != "extra" else int(variant.get("extraPrice", 0) or 0),
     }
 
 
@@ -298,30 +306,38 @@ def build_component_catalog_state(
 ) -> Dict[str, Any]:
     if not component_active:
         return {
+            "rawStatus": "inactive",
             "status": "inactive",
             "label": "Inactivo",
+            "lockLabel": "Inactivo",
             "locked": True,
             "lockReason": "Este componente está inactivo.",
         }
     if not component_allowed:
         return {
-            "status": "blocked_by_category",
+            "rawStatus": "blocked_by_category",
+            "status": "blocked",
             "label": "No disponible para esta categoría",
+            "lockLabel": "No disponible para esta categoría",
             "locked": True,
             "lockReason": "Este componente no está disponible para la categoría seleccionada.",
         }
     if not is_tier_allowed_for_plan(component_tier, plan_tier):
         return {
-            "status": "blocked_by_plan",
+            "rawStatus": "blocked_by_plan",
+            "status": "blocked",
             "label": "No disponible para este plan",
+            "lockLabel": "No disponible para este plan",
             "locked": True,
             "lockReason": "Este componente no está disponible para el plan seleccionado.",
         }
     return {
+        "rawStatus": "included",
         "status": "included",
         "label": "Disponible",
+        "lockLabel": "",
         "locked": False,
-        "lockReason": None,
+        "lockReason": "",
     }
 
 
@@ -719,6 +735,7 @@ class CatalogService:
         category = self.category_service.get_by_code(product_type, template_category)
         components = self.component_service.list(product_type=product_type)
         allowed_codes = set(category.get("allowedComponentCodes", []))
+        category_label = category.get("name", template_category)
         response_components: List[Dict[str, Any]] = []
 
         for component in components:
@@ -734,7 +751,7 @@ class CatalogService:
                 availability = build_variant_catalog_state(
                     variant=variant,
                     plan_tier=plan_tier,
-                    component_status=component_availability["status"],
+                    component_status=component_availability["rawStatus"],
                 )
                 variants.append(
                     {
@@ -744,6 +761,7 @@ class CatalogService:
                         "variantTier": variant["variantTier"],
                         "sortOrder": int(variant.get("sortOrder", 1) or 1),
                         "status": availability["status"],
+                        "lockLabel": availability["lockLabel"],
                         "label": availability["label"],
                         "active": variant.get("active", True),
                         "extraPrice": availability["extraPrice"],
@@ -756,6 +774,7 @@ class CatalogService:
                 {
                     "componentCode": component["componentCode"],
                     "categoryCode": component.get("categoryCode", component["componentCode"]),
+                    "categoryLabel": category_label,
                     "componentTier": component["componentTier"],
                     "name": component["name"],
                     "description": component.get("description", ""),
@@ -763,6 +782,7 @@ class CatalogService:
                     "sortOrder": int(component.get("sortOrder", 1) or 1),
                     "allowedByCategory": component_allowed,
                     "status": component_availability["status"],
+                    "lockLabel": component_availability["lockLabel"],
                     "label": component_availability["label"],
                     "locked": component_availability["locked"],
                     "lockReason": component_availability["lockReason"],
