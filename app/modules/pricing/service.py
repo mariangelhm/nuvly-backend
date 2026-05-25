@@ -30,6 +30,8 @@ COMPONENTS_COLLECTION = "pricing_components"
 TEMPLATE_CATEGORIES_COLLECTION = "template_categories"
 GENERAL_EXTRAS = {item["code"]: item for item in GENERAL_EXTRA_SEEDS}
 
+TIER_PRIORITY: dict[VariantLevel, int] = {"core": 0, "advanced": 1, "premium": 2}
+
 
 def _normalize_plan_response_document(document: Dict[str, Any]) -> Dict[str, Any]:
     normalized = deepcopy(document)
@@ -79,6 +81,10 @@ def _normalize_component_response_document(document: Dict[str, Any]) -> Dict[str
         normalized_variant.setdefault("sortOrder", 1)
         normalized_variants.append(normalized_variant)
     normalized["variants"] = sorted(normalized_variants, key=lambda item: item.get("sortOrder", 0))
+    normalized["componentTier"] = normalize_variant_level(
+        normalized.get("componentTier"),
+        default=_infer_component_tier(normalized["variants"]),
+    )
     return normalized
 
 
@@ -136,6 +142,8 @@ def _normalize_component_document(document: Dict[str, Any]) -> Dict[str, Any]:
         raise NuvlyError("categoryCode no puede ser vacio.", 422, "INVALID_COMPONENT_CATEGORY_CODE")
     if normalized.get("productType") not in VALID_PRODUCT_TYPES:
         raise NuvlyError("productType invalido.", 422, "INVALID_PRODUCT_TYPE")
+    if normalized.get("componentTier") not in VALID_VARIANT_LEVELS:
+        raise NuvlyError("componentTier invalido.", 422, "INVALID_COMPONENT_TIER")
 
     variants = normalized.get("variants")
     if not isinstance(variants, list) or not variants:
@@ -156,7 +164,28 @@ def _normalize_component_document(document: Dict[str, Any]) -> Dict[str, Any]:
         seen_variant_codes.add(normalized_variant["variantCode"])
         normalized_variants.append(normalized_variant)
     normalized["variants"] = sorted(normalized_variants, key=lambda item: item.get("sortOrder", 0))
+    normalized["componentTier"] = normalize_variant_level(
+        normalized.get("componentTier"),
+        default=_infer_component_tier(normalized["variants"]),
+    )
     return normalized
+
+
+def _infer_component_tier(variants: List[Dict[str, Any]]) -> VariantLevel:
+    if not variants:
+        return "core"
+    highest = max((variant.get("variantTier", "core") for variant in variants), key=lambda tier: TIER_PRIORITY.get(tier, 0))
+    return normalize_variant_level(highest)
+
+
+def is_tier_allowed_for_plan(tier: VariantLevel, plan_tier: PlanTier) -> bool:
+    if plan_tier == "custom":
+        return True
+    if plan_tier == "essential":
+        return tier == "core"
+    if plan_tier == "plus":
+        return tier in {"core", "advanced"}
+    return True
 
 
 def _normalize_template_category_document(document: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,56 +242,43 @@ def _sync_seed_document(
     return "inserted"
 
 
-def resolve_variant_status(variant: Dict[str, Any], plan_tier: PlanTier, component_allowed: bool, component_active: bool) -> str:
-    if not component_active or not variant.get("active", True):
-        return "inactive"
-    if not component_allowed:
-        return "blocked_by_category"
-    if plan_tier == "custom":
-        return "included"
-    if plan_tier in variant.get("includedInPlans", []):
-        return "included"
-    if plan_tier in variant.get("canBeExtraInPlans", []):
-        return "extra"
-    return "blocked_by_plan"
-
-
 def build_variant_catalog_state(
     *,
     variant: Dict[str, Any],
     plan_tier: PlanTier,
-    component_allowed: bool,
-    component_active: bool,
+    component_status: str,
 ) -> Dict[str, Any]:
-    status = resolve_variant_status(
-        variant=variant,
-        plan_tier=plan_tier,
-        component_allowed=component_allowed,
-        component_active=component_active,
-    )
-
-    if status == "included":
-        label = "Incluido"
-        locked = False
-        lock_reason = None
-    elif status == "extra":
-        extra_price = int(variant.get("extraPrice", 0))
-        label = f"Extra ${extra_price}"
-        locked = False
-        lock_reason = None
-    elif status == "blocked_by_category":
+    if component_status == "inactive":
+        status = "inactive"
+        label = "Inactivo"
+        locked = True
+        lock_reason = "El componente padre está inactivo."
+    elif component_status == "blocked_by_category":
+        status = "blocked_by_category"
         label = "No disponible para esta categoría"
         locked = True
-        lock_reason = "Este componente no está disponible para la categoría seleccionada."
-    elif status == "inactive":
+        lock_reason = "El componente padre no está disponible para la categoría seleccionada."
+    elif component_status == "blocked_by_plan":
+        status = "blocked_by_component_plan"
+        label = "Componente no disponible para este plan"
+        locked = True
+        lock_reason = "El componente padre está bloqueado para este plan."
+    elif not variant.get("active", True):
+        status = "inactive"
         label = "Inactivo"
         locked = True
         lock_reason = "Esta variante está inactiva."
+    elif is_tier_allowed_for_plan(variant["variantTier"], plan_tier):
+        status = "included"
+        label = "Incluido"
+        locked = False
+        lock_reason = None
     else:
         plan_label = str(plan_tier).capitalize()
-        label = f"No disponible en {plan_label}"
+        status = "blocked_by_plan"
+        label = "No disponible para este plan"
         locked = True
-        lock_reason = f"Esta variante no está disponible en el plan {plan_label}."
+        lock_reason = f"Esta variante {variant['variantTier']} no está disponible en {plan_label}."
 
     return {
         "status": status,
@@ -270,6 +286,42 @@ def build_variant_catalog_state(
         "locked": locked,
         "lockReason": lock_reason,
         "extraPrice": int(variant.get("extraPrice", 0) or 0),
+    }
+
+
+def build_component_catalog_state(
+    *,
+    component_tier: VariantLevel,
+    plan_tier: PlanTier,
+    component_allowed: bool,
+    component_active: bool,
+) -> Dict[str, Any]:
+    if not component_active:
+        return {
+            "status": "inactive",
+            "label": "Inactivo",
+            "locked": True,
+            "lockReason": "Este componente está inactivo.",
+        }
+    if not component_allowed:
+        return {
+            "status": "blocked_by_category",
+            "label": "No disponible para esta categoría",
+            "locked": True,
+            "lockReason": "Este componente no está disponible para la categoría seleccionada.",
+        }
+    if not is_tier_allowed_for_plan(component_tier, plan_tier):
+        return {
+            "status": "blocked_by_plan",
+            "label": "No disponible para este plan",
+            "locked": True,
+            "lockReason": "Este componente no está disponible para el plan seleccionado.",
+        }
+    return {
+        "status": "included",
+        "label": "Disponible",
+        "locked": False,
+        "lockReason": None,
     }
 
 
@@ -671,13 +723,18 @@ class CatalogService:
 
         for component in components:
             component_allowed = component["componentCode"] in allowed_codes
+            component_availability = build_component_catalog_state(
+                component_tier=component["componentTier"],
+                plan_tier=plan_tier,
+                component_allowed=component_allowed,
+                component_active=component.get("active", True),
+            )
             variants = []
             for variant in component.get("variants", []):
                 availability = build_variant_catalog_state(
                     variant=variant,
                     plan_tier=plan_tier,
-                    component_allowed=component_allowed,
-                    component_active=component.get("active", True),
+                    component_status=component_availability["status"],
                 )
                 variants.append(
                     {
@@ -699,11 +756,16 @@ class CatalogService:
                 {
                     "componentCode": component["componentCode"],
                     "categoryCode": component.get("categoryCode", component["componentCode"]),
+                    "componentTier": component["componentTier"],
                     "name": component["name"],
                     "description": component.get("description", ""),
                     "active": component.get("active", True),
                     "sortOrder": int(component.get("sortOrder", 1) or 1),
                     "allowedByCategory": component_allowed,
+                    "status": component_availability["status"],
+                    "label": component_availability["label"],
+                    "locked": component_availability["locked"],
+                    "lockReason": component_availability["lockReason"],
                     "variants": variants,
                 }
             )
@@ -723,14 +785,15 @@ class PricingSummaryService:
         self.component_service = PricingComponentService(repository=self.repository)
 
     @staticmethod
-    def _build_matrix_cell(variant: Dict[str, Any], tier: PlanTier) -> Dict[str, Any]:
+    def _build_matrix_cell(component: Dict[str, Any], variant: Dict[str, Any], tier: PlanTier) -> Dict[str, Any]:
+        if not component.get("active", True) or not variant.get("active", True):
+            return {"status": "blocked", "label": "Inactivo", "extraPrice": None}
+        if not is_tier_allowed_for_plan(component["componentTier"], tier):
+            return {"status": "blocked", "label": "No disponible", "extraPrice": None}
         if tier == "custom":
             return {"status": "included", "label": "Incluido", "extraPrice": None}
-        if tier in variant.get("includedInPlans", []):
+        if is_tier_allowed_for_plan(variant["variantTier"], tier):
             return {"status": "included", "label": "Incluido", "extraPrice": None}
-        if tier in variant.get("canBeExtraInPlans", []):
-            extra_price = variant.get("extraPrice", 0)
-            return {"status": "extra", "label": f"Extra ${extra_price}", "extraPrice": extra_price}
         return {"status": "blocked", "label": "No disponible", "extraPrice": None}
 
     def build_summary(self, product_type: ProductType, include_inactive: bool = False, variant_level: Optional[VariantLevel] = None) -> Dict[str, Any]:
@@ -747,7 +810,7 @@ class PricingSummaryService:
                     continue
                 matrix: Dict[str, Dict[str, Any]] = {}
                 for plan in plans:
-                    cell = self._build_matrix_cell(variant, plan["tier"])
+                    cell = self._build_matrix_cell(component, variant, plan["tier"])
                     matrix[plan["tier"]] = cell
                     tier_counters[plan["tier"]][cell["status"]] += 1
                 summary_variants.append(

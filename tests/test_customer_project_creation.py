@@ -278,6 +278,27 @@ def test_template_create_rejects_variant_blocked_by_plan() -> None:
         raise AssertionError("Expected VARIANT_NOT_ALLOWED_FOR_PLAN")
 
 
+def test_template_create_rejects_component_blocked_by_plan_before_variant() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "essential"
+    payload["templateCategory"] = "construction"
+    payload["blocks"] = [
+        {"id": "blk_lead_form", "type": "leadForm", "variant": "leadForm-variant-a", "enabled": True, "order": 1, "props": {}, "settings": {}}
+    ]
+    payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
+    payload["layout"]["sectionOrder"] = ["blk_lead_form"]
+
+    try:
+        template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_PLAN"
+    else:
+        raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_PLAN")
+
+
 def test_template_create_rejects_component_blocked_by_category() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)

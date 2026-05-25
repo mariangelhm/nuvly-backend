@@ -26,7 +26,12 @@ from app.modules.domain.defaults import (
 )
 from app.modules.domain.normalizer import normalize_document
 from app.modules.domain.repository import DomainRepository
-from app.modules.pricing.service import PricingComponentService, TemplateCategoryService, build_variant_catalog_state
+from app.modules.pricing.service import (
+    PricingComponentService,
+    TemplateCategoryService,
+    build_component_catalog_state,
+    build_variant_catalog_state,
+)
 
 logger = logging.getLogger(__name__)
 PUBLIC_SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
@@ -215,19 +220,29 @@ class CommercialRulesService:
             component_with_variant = self.component_service.find_variant(product_type, component_code, variant_code)
             component = component_with_variant["component"]
             variant = component_with_variant["variant"]
-
-            availability = build_variant_catalog_state(
-                variant=variant,
+            component_availability = build_component_catalog_state(
+                component_tier=component["componentTier"],
                 plan_tier=plan_tier,
                 component_allowed=component_code in allowed_component_codes,
                 component_active=component.get("active", True),
             )
+            component_status = component_availability["status"]
+            if component_status == "inactive":
+                raise NuvlyError("El componente seleccionado está inactivo.", 422, "COMPONENT_INACTIVE")
+            if component_status == "blocked_by_category":
+                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+            if component_status == "blocked_by_plan":
+                raise NuvlyError("El componente no esta permitido para el plan.", 422, "COMPONENT_NOT_ALLOWED_FOR_PLAN")
+
+            availability = build_variant_catalog_state(
+                variant=variant,
+                plan_tier=plan_tier,
+                component_status=component_status,
+            )
             status = availability["status"]
 
             if status == "inactive":
-                raise NuvlyError("La variante seleccionada esta inactiva.", 422, "INACTIVE_COMPONENT_VARIANT")
-            if status == "blocked_by_category":
-                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+                raise NuvlyError("La variante seleccionada esta inactiva.", 422, "VARIANT_INACTIVE")
             if status == "blocked_by_plan":
                 raise NuvlyError("La variante no esta permitida por el plan.", 422, "VARIANT_NOT_ALLOWED_FOR_PLAN")
             if status == "extra" and (component_code, variant_code) not in selected_component_extras:

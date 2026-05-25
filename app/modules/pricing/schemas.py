@@ -6,7 +6,7 @@ from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, Varian
 
 CurrencyCode = Literal["CLP"]
 PriceUnit = Literal["component"]
-CatalogVariantStatus = Literal["included", "extra", "blocked_by_plan", "blocked_by_category", "inactive", "not_found"]
+CatalogVariantStatus = Literal["included", "extra", "blocked_by_plan", "blocked_by_component_plan", "blocked_by_category", "inactive", "not_found"]
 SummaryVariantStatus = Literal["included", "extra", "blocked"]
 
 
@@ -61,6 +61,7 @@ class PricingComponentBase(BaseModel):
     componentCode: str = Field(min_length=1, max_length=160)
     productType: ProductType
     categoryCode: str = Field(min_length=1, max_length=160)
+    componentTier: VariantLevel = "core"
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
     active: bool = True
@@ -188,11 +189,16 @@ class CatalogComponentVariantResponse(BaseModel):
 class CatalogComponentResponse(BaseModel):
     componentCode: str
     categoryCode: str
+    componentTier: VariantLevel
     name: str
     description: str = ""
     active: bool = True
     sortOrder: int = Field(default=1, ge=0)
     allowedByCategory: bool
+    status: CatalogVariantStatus
+    label: str
+    locked: bool
+    lockReason: str | None = None
     variants: List[CatalogComponentVariantResponse] = Field(default_factory=list)
 
 

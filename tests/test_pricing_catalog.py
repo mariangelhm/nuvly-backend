@@ -317,16 +317,20 @@ def test_catalog_components_calculates_variant_statuses() -> None:
     assert hero["name"] == "Hero"
     assert hero["description"] == ""
     assert hero["categoryCode"] == "hero"
+    assert hero["componentTier"] == "core"
     assert hero["active"] is True
     assert hero["allowedByCategory"] is True
+    assert hero["status"] == "included"
+    assert hero["label"] == "Disponible"
+    assert hero["locked"] is False
     assert hero["sortOrder"] == 2
     assert h1["status"] == "included"
     assert h1["label"] == "Incluido"
     assert h1["locked"] is False
     assert h1["sortOrder"] == 1
-    assert h8["status"] == "extra"
-    assert h8["label"] == "Extra $3990"
-    assert h8["locked"] is False
+    assert h8["status"] == "blocked_by_plan"
+    assert h8["label"] == "No disponible para este plan"
+    assert h8["locked"] is True
 
 
 def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
@@ -355,16 +359,30 @@ def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> Non
     by_plan = service.list_components_for_catalog("website", "construction", "essential")
     hero = next(component for component in by_plan["components"] if component["componentCode"] == "hero")
     premium = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+    lead_form = next(component for component in by_plan["components"] if component["componentCode"] == "leadForm")
+    lead_form_variant = lead_form["variants"][0]
 
     by_category = service.list_components_for_catalog("website", "beauty", "plus")
     projects = next(component for component in by_category["components"] if component["componentCode"] == "projects")
     project_variant = projects["variants"][0]
+    branches = next(component for component in by_plan["components"] if component["componentCode"] == "branches")
+    branches_variant = branches["variants"][0]
 
     assert premium["status"] == "blocked_by_plan"
-    assert premium["label"] == "No disponible en Essential"
+    assert premium["label"] == "No disponible para este plan"
     assert premium["locked"] is True
-    assert premium["lockReason"] == "Esta variante no está disponible en el plan Essential."
+    assert premium["lockReason"] == "Esta variante premium no está disponible en Essential."
+    assert lead_form["status"] == "blocked_by_plan"
+    assert lead_form["locked"] is True
+    assert lead_form_variant["status"] == "blocked_by_component_plan"
+    assert lead_form_variant["label"] == "Componente no disponible para este plan"
+    assert branches["status"] == "blocked_by_plan"
+    assert branches["label"] == "No disponible para este plan"
+    assert branches["locked"] is True
+    assert branches["lockReason"] == "Este componente no está disponible para el plan seleccionado."
+    assert branches_variant["status"] == "blocked_by_component_plan"
     assert projects["allowedByCategory"] is False
+    assert projects["status"] == "blocked_by_category"
     assert project_variant["status"] == "blocked_by_category"
     assert project_variant["label"] == "No disponible para esta categoría"
     assert project_variant["locked"] is True
@@ -381,7 +399,7 @@ def test_pricing_summary_builds_matrix_per_variant() -> None:
 
     assert premium_variant["variantTier"] == "premium"
     assert premium_variant["matrix"]["essential"]["status"] == "blocked"
-    assert premium_variant["matrix"]["plus"]["status"] == "extra"
+    assert premium_variant["matrix"]["plus"]["status"] == "blocked"
     assert premium_variant["matrix"]["pro"]["status"] == "included"
 
 
@@ -410,6 +428,7 @@ def test_pricing_component_list_normalizes_legacy_documents() -> None:
     validated = PricingComponentResponse.model_validate(component)
 
     assert validated.categoryCode == "hero"
+    assert validated.componentTier == "core"
     assert validated.sortOrder == 1
     assert validated.variants[0].currency == "CLP"
     assert validated.variants[0].sortOrder == 1
@@ -548,7 +567,7 @@ def test_pricing_seed_uses_updated_website_plan_prices() -> None:
     assert plus_web["basePriceYearly"] == 199990
 
 
-def test_pricing_calculate_sums_plan_component_extras_and_general_extras() -> None:
+def test_pricing_calculate_sums_plan_and_general_extras() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
     service = PricingCalculatorService(repository=repository)
@@ -558,13 +577,13 @@ def test_pricing_calculate_sums_plan_component_extras_and_general_extras() -> No
             productType="website",
             planTier="plus",
             templateCategory="construction",
-            selectedComponentExtras=[{"componentCode": "hero", "variantCode": "hero-premium-video"}],
+            selectedComponentExtras=[],
             selectedExtras=["custom_domain"],
             durationMonths=12,
         )
     )
 
     assert response["currency"] == "CLP"
-    assert response["componentExtrasTotal"] == 3990
+    assert response["componentExtrasTotal"] == 0
     assert response["extrasTotal"] == 1990
-    assert response["total"] == response["basePrice"] + 3990 + 1990
+    assert response["total"] == response["basePrice"] + 1990
