@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,13 +25,15 @@ from app.modules.pricing.service import ensure_pricing_seed
 configure_logging()
 logger = logging.getLogger(__name__)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+
+async def initialize_application(app: FastAPI) -> None:
     logger.info("Starting Nuvly Backend")
     try:
-        ping_database()
-        create_indexes()
-        seed_stats = ensure_pricing_seed()
+        await asyncio.to_thread(ping_database)
+        await asyncio.to_thread(create_indexes)
+        seed_stats = await asyncio.to_thread(ensure_pricing_seed)
+        app.state.startup_status = "ready"
+        app.state.startup_error = None
         logger.info("MongoDB connected and indexes created")
         logger.info(
             "Pricing seed ensured | insertedPlans=%s insertedComponents=%s insertedTemplateCategories=%s skippedPlans=%s skippedComponents=%s skippedTemplateCategories=%s",
@@ -41,12 +44,26 @@ async def lifespan(app: FastAPI):
             seed_stats.skippedComponents,
             seed_stats.skippedTemplateCategories,
         )
-    except Exception:
+    except Exception as exc:
+        app.state.startup_status = "degraded"
+        app.state.startup_error = str(exc)
         logger.exception("MongoDB startup failed")
-        raise
-    yield
-    close_database()
-    logger.info("Nuvly Backend stopped")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.startup_status = "starting"
+    app.state.startup_error = None
+    startup_task = asyncio.create_task(initialize_application(app))
+    try:
+        yield
+    finally:
+        if not startup_task.done():
+            startup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await startup_task
+        close_database()
+        logger.info("Nuvly Backend stopped")
 
 settings = get_settings()
 ensure_static_directories()
