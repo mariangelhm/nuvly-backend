@@ -1,5 +1,10 @@
-from fastapi import FastAPI, Request
+import logging
+
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError, ResponseValidationError
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class NuvlyError(Exception):
@@ -10,10 +15,58 @@ class NuvlyError(Exception):
         super().__init__(message)
 
 
+def _request_context(request: Request) -> str:
+    return f"{request.method} {request.url.path}"
+
+
+async def handle_nuvly_error(request: Request, exc: NuvlyError):
+    logger.warning(
+        "Handled NuvlyError | request=%s | status=%s | code=%s | message=%s",
+        _request_context(request),
+        exc.status_code,
+        exc.code,
+        exc.message,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"code": exc.code, "message": exc.message}},
+    )
+
+
+async def handle_request_validation_error(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "Request validation failed | request=%s | errors=%s",
+        _request_context(request),
+        exc.errors(),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"error": {"code": "REQUEST_VALIDATION_ERROR", "message": "Request validation failed.", "details": exc.errors()}},
+    )
+
+
+async def handle_response_validation_error(request: Request, exc: ResponseValidationError):
+    logger.exception(
+        "Response validation failed | request=%s | errors=%s",
+        _request_context(request),
+        exc.errors(),
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": {"code": "RESPONSE_VALIDATION_ERROR", "message": "Response validation failed."}},
+    )
+
+
+async def handle_unexpected_error(request: Request, exc: Exception):
+    logger.exception("Unhandled exception | request=%s", _request_context(request), exc_info=exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"error": {"code": "INTERNAL_SERVER_ERROR", "message": "Internal server error."}},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
-    @app.exception_handler(NuvlyError)
-    async def handle_nuvly_error(_: Request, exc: NuvlyError):
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": {"code": exc.code, "message": exc.message}},
-        )
+    app.add_exception_handler(NuvlyError, handle_nuvly_error)
+    app.add_exception_handler(RequestValidationError, handle_request_validation_error)
+    app.add_exception_handler(ResponseValidationError, handle_response_validation_error)
+    app.add_exception_handler(Exception, handle_unexpected_error)
