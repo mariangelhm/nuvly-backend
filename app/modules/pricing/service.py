@@ -37,6 +37,8 @@ def _normalize_plan_response_document(document: Dict[str, Any]) -> Dict[str, Any
     normalized.setdefault("currency", "CLP")
     normalized.setdefault("active", True)
     normalized.setdefault("sortOrder", 1)
+    normalized.setdefault("basePriceMonthly", None)
+    normalized.setdefault("basePriceYearly", None)
     normalized.setdefault("durationMonths", 12)
     return normalized
 
@@ -171,18 +173,104 @@ def _normalize_template_category_document(document: Dict[str, Any]) -> Dict[str,
     return normalized
 
 
+def _sync_seed_document(
+    repository: PricingRepository,
+    collection_name: str,
+    lookup_filters: List[Dict[str, Any]],
+    document: Dict[str, Any],
+    duplicate_message: str,
+    duplicate_code: str,
+    not_found_message: str,
+    not_found_code: str,
+) -> str:
+    existing: Dict[str, Any] | None = None
+    for filters in lookup_filters:
+        existing = repository.find_document(collection_name, filters)
+        if existing:
+            break
+
+    if existing:
+        synced_document = deepcopy(document)
+        synced_document["id"] = existing.get("id", document["id"])
+        synced_document["createdAt"] = existing.get("createdAt", document["createdAt"])
+        repository.replace_document(
+            collection_name,
+            synced_document["id"],
+            synced_document,
+            not_found_message,
+            not_found_code,
+            duplicate_message,
+            duplicate_code,
+        )
+        return "updated"
+
+    repository.insert_document(
+        collection_name,
+        document,
+        duplicate_message=duplicate_message,
+        duplicate_code=duplicate_code,
+    )
+    return "inserted"
+
+
 def resolve_variant_status(variant: Dict[str, Any], plan_tier: PlanTier, component_allowed: bool, component_active: bool) -> str:
     if not component_active or not variant.get("active", True):
         return "inactive"
-    if plan_tier == "custom":
-        return "included"
     if not component_allowed:
         return "blocked_by_category"
+    if plan_tier == "custom":
+        return "included"
     if plan_tier in variant.get("includedInPlans", []):
         return "included"
     if plan_tier in variant.get("canBeExtraInPlans", []):
         return "extra"
     return "blocked_by_plan"
+
+
+def build_variant_catalog_state(
+    *,
+    variant: Dict[str, Any],
+    plan_tier: PlanTier,
+    component_allowed: bool,
+    component_active: bool,
+) -> Dict[str, Any]:
+    status = resolve_variant_status(
+        variant=variant,
+        plan_tier=plan_tier,
+        component_allowed=component_allowed,
+        component_active=component_active,
+    )
+
+    if status == "included":
+        label = "Incluido"
+        locked = False
+        lock_reason = None
+    elif status == "extra":
+        extra_price = int(variant.get("extraPrice", 0))
+        label = f"Extra ${extra_price}"
+        locked = False
+        lock_reason = None
+    elif status == "blocked_by_category":
+        label = "No disponible para esta categoría"
+        locked = True
+        lock_reason = "Este componente no está disponible para la categoría seleccionada."
+    elif status == "inactive":
+        label = "Inactivo"
+        locked = True
+        lock_reason = "Esta variante está inactiva."
+    else:
+        plan_label = str(plan_tier).capitalize()
+        label = f"No disponible en {plan_label}"
+        locked = True
+        lock_reason = f"Esta variante no está disponible en el plan {plan_label}."
+
+    return {
+        "status": status,
+        "label": label,
+        "locked": locked,
+        "lockReason": lock_reason,
+        "extraPrice": int(variant.get("extraPrice", 0) or 0),
+    }
 
 
 class PricingPlanService:
@@ -254,24 +342,24 @@ class PricingPlanService:
         stats = empty_seed_stats()
         now = utc_now_iso()
         for seed in PLAN_SEEDS:
-            existing = self.repository.find_document(PLANS_COLLECTION, {"code": seed["code"]}) or self.repository.find_document(
-                PLANS_COLLECTION,
-                {"id": seed["id"]},
-            )
-            if existing:
-                stats.skippedPlans += 1
-                continue
             document = _normalize_plan_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
             try:
-                self.repository.insert_document(
-                    PLANS_COLLECTION,
-                    document,
+                result = _sync_seed_document(
+                    repository=self.repository,
+                    collection_name=PLANS_COLLECTION,
+                    lookup_filters=[{"id": seed["id"]}, {"code": seed["code"]}, {"productType": seed["productType"], "tier": seed["tier"]}],
+                    document=document,
                     duplicate_message="Ya existe un plan comercial con ese code.",
                     duplicate_code="DUPLICATED_PLAN_CODE",
+                    not_found_message="Plan comercial no encontrado.",
+                    not_found_code="PRICING_PLAN_NOT_FOUND",
                 )
-                stats.insertedPlans += 1
+                if result == "inserted":
+                    stats.insertedPlans += 1
+                else:
+                    stats.skippedPlans += 1
             except NuvlyError as exc:
                 if exc.code != "DUPLICATED_PLAN_CODE":
                     raise
@@ -348,24 +436,27 @@ class TemplateCategoryService:
         stats = empty_seed_stats()
         now = utc_now_iso()
         for seed in TEMPLATE_CATEGORY_SEEDS:
-            existing = self.repository.find_document(
-                TEMPLATE_CATEGORIES_COLLECTION,
-                {"productType": seed["productType"], "categoryCode": seed["categoryCode"]},
-            ) or self.repository.find_document(TEMPLATE_CATEGORIES_COLLECTION, {"id": seed["id"]})
-            if existing:
-                stats.skippedTemplateCategories += 1
-                continue
             document = _normalize_template_category_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
             try:
-                self.repository.insert_document(
-                    TEMPLATE_CATEGORIES_COLLECTION,
-                    document,
+                result = _sync_seed_document(
+                    repository=self.repository,
+                    collection_name=TEMPLATE_CATEGORIES_COLLECTION,
+                    lookup_filters=[
+                        {"id": seed["id"]},
+                        {"productType": seed["productType"], "categoryCode": seed["categoryCode"]},
+                    ],
+                    document=document,
                     duplicate_message="Ya existe una categoria con ese productType y categoryCode.",
                     duplicate_code="DUPLICATED_TEMPLATE_CATEGORY",
+                    not_found_message="Categoria de template no encontrada.",
+                    not_found_code="TEMPLATE_CATEGORY_NOT_FOUND",
                 )
-                stats.insertedTemplateCategories += 1
+                if result == "inserted":
+                    stats.insertedTemplateCategories += 1
+                else:
+                    stats.skippedTemplateCategories += 1
             except NuvlyError as exc:
                 if exc.code != "DUPLICATED_TEMPLATE_CATEGORY":
                     raise
@@ -524,24 +615,27 @@ class PricingComponentService:
         stats = empty_seed_stats()
         now = utc_now_iso()
         for seed in COMPONENT_SEEDS:
-            existing = self.repository.find_document(
-                COMPONENTS_COLLECTION,
-                {"productType": seed["productType"], "componentCode": seed["componentCode"]},
-            ) or self.repository.find_document(COMPONENTS_COLLECTION, {"id": seed["id"]})
-            if existing:
-                stats.skippedComponents += 1
-                continue
             document = _normalize_component_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
             try:
-                self.repository.insert_document(
-                    COMPONENTS_COLLECTION,
-                    document,
+                result = _sync_seed_document(
+                    repository=self.repository,
+                    collection_name=COMPONENTS_COLLECTION,
+                    lookup_filters=[
+                        {"id": seed["id"]},
+                        {"productType": seed["productType"], "componentCode": seed["componentCode"]},
+                    ],
+                    document=document,
                     duplicate_message="Ya existe un componente comercial con ese componentCode.",
                     duplicate_code="DUPLICATED_COMPONENT_CODE",
+                    not_found_message="Componente comercial no encontrado.",
+                    not_found_code="PRICING_COMPONENT_NOT_FOUND",
                 )
-                stats.insertedComponents += 1
+                if result == "inserted":
+                    stats.insertedComponents += 1
+                else:
+                    stats.skippedComponents += 1
             except NuvlyError as exc:
                 if exc.code != "DUPLICATED_COMPONENT_CODE":
                     raise
@@ -571,32 +665,36 @@ class CatalogService:
         plan_tier: PlanTier,
     ) -> Dict[str, Any]:
         category = self.category_service.get_by_code(product_type, template_category)
-        all_categories = self.category_service.list(product_type=product_type, active=True)
         components = self.component_service.list(product_type=product_type)
         allowed_codes = set(category.get("allowedComponentCodes", []))
         response_components: List[Dict[str, Any]] = []
 
         for component in components:
-            component_allowed = component["componentCode"] in allowed_codes or plan_tier == "custom"
+            component_allowed = component["componentCode"] in allowed_codes
             variants = []
             for variant in component.get("variants", []):
-                if not variant.get("active", True):
-                    continue
-                status = resolve_variant_status(variant, plan_tier, component_allowed, component.get("active", True))
+                availability = build_variant_catalog_state(
+                    variant=variant,
+                    plan_tier=plan_tier,
+                    component_allowed=component_allowed,
+                    component_active=component.get("active", True),
+                )
                 variants.append(
                     {
                         "variantCode": variant["variantCode"],
                         "name": variant["name"],
                         "description": variant.get("description", ""),
                         "variantTier": variant["variantTier"],
-                        "status": status,
-                        "active": True,
-                        "extraPrice": variant.get("extraPrice", 0),
+                        "sortOrder": int(variant.get("sortOrder", 1) or 1),
+                        "status": availability["status"],
+                        "label": availability["label"],
+                        "active": variant.get("active", True),
+                        "extraPrice": availability["extraPrice"],
                         "currency": variant.get("currency", "CLP"),
+                        "locked": availability["locked"],
+                        "lockReason": availability["lockReason"],
                     }
                 )
-            if not variants:
-                continue
             response_components.append(
                 {
                     "componentCode": component["componentCode"],
@@ -604,7 +702,8 @@ class CatalogService:
                     "name": component["name"],
                     "description": component.get("description", ""),
                     "active": component.get("active", True),
-                    "blockedByCategory": not component_allowed and plan_tier != "custom",
+                    "sortOrder": int(component.get("sortOrder", 1) or 1),
+                    "allowedByCategory": component_allowed,
                     "variants": variants,
                 }
             )
@@ -613,7 +712,6 @@ class CatalogService:
             "productType": product_type,
             "templateCategory": template_category,
             "planTier": plan_tier,
-            "categories": all_categories,
             "components": response_components,
         }
 
@@ -685,6 +783,8 @@ class PricingSummaryService:
                 "tier": plan["tier"],
                 "name": plan["name"],
                 "basePrice": plan["basePrice"],
+                "basePriceMonthly": plan.get("basePriceMonthly"),
+                "basePriceYearly": plan.get("basePriceYearly"),
                 "currency": plan["currency"],
                 "includedCount": tier_counters[plan["tier"]]["included"],
                 "extraCount": tier_counters[plan["tier"]]["extra"],
@@ -742,6 +842,8 @@ class PricingCalculatorService:
             extra = GENERAL_EXTRAS.get(extra_code)
             if not extra:
                 raise NuvlyError("Extra general no soportado.", 400, "INVALID_GENERAL_EXTRA")
+            if extra.get("productType") and extra["productType"] != payload.productType:
+                raise NuvlyError("Extra general no soportado para ese tipo de producto.", 400, "INVALID_GENERAL_EXTRA")
             extras_total += int(extra["price"])
             breakdown.append(
                 {

@@ -26,7 +26,7 @@ from app.modules.domain.defaults import (
 )
 from app.modules.domain.normalizer import normalize_document
 from app.modules.domain.repository import DomainRepository
-from app.modules.pricing.service import PricingComponentService, TemplateCategoryService, resolve_variant_status
+from app.modules.pricing.service import PricingComponentService, TemplateCategoryService, build_variant_catalog_state
 
 logger = logging.getLogger(__name__)
 PUBLIC_SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
@@ -216,21 +216,21 @@ class CommercialRulesService:
             component = component_with_variant["component"]
             variant = component_with_variant["variant"]
 
-            if not component.get("active", True) or not variant.get("active", True):
-                raise NuvlyError("La variante seleccionada esta inactiva.", 422, "INACTIVE_COMPONENT_VARIANT")
-
-            if plan_tier != "custom" and component_code not in allowed_component_codes:
-                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
-
-            status = resolve_variant_status(
-                variant,
-                plan_tier,
-                component_allowed=component_code in allowed_component_codes or plan_tier == "custom",
+            availability = build_variant_catalog_state(
+                variant=variant,
+                plan_tier=plan_tier,
+                component_allowed=component_code in allowed_component_codes,
                 component_active=component.get("active", True),
             )
-            if plan_tier != "custom" and status == "blocked_by_plan":
+            status = availability["status"]
+
+            if status == "inactive":
+                raise NuvlyError("La variante seleccionada esta inactiva.", 422, "INACTIVE_COMPONENT_VARIANT")
+            if status == "blocked_by_category":
+                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+            if status == "blocked_by_plan":
                 raise NuvlyError("La variante no esta permitida por el plan.", 422, "VARIANT_NOT_ALLOWED_FOR_PLAN")
-            if plan_tier != "custom" and status == "extra" and (component_code, variant_code) not in selected_component_extras:
+            if status == "extra" and (component_code, variant_code) not in selected_component_extras:
                 raise NuvlyError("La variante premium requiere ser seleccionada como extra.", 422, "PREMIUM_VARIANT_REQUIRES_EXTRA")
 
 

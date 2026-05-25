@@ -314,11 +314,22 @@ def test_catalog_components_calculates_variant_statuses() -> None:
     h8 = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
 
     assert response["templateCategory"] == "construction"
+    assert hero["name"] == "Hero"
+    assert hero["description"] == ""
+    assert hero["categoryCode"] == "hero"
+    assert hero["active"] is True
+    assert hero["allowedByCategory"] is True
+    assert hero["sortOrder"] == 2
     assert h1["status"] == "included"
+    assert h1["label"] == "Incluido"
+    assert h1["locked"] is False
+    assert h1["sortOrder"] == 1
     assert h8["status"] == "extra"
+    assert h8["label"] == "Extra $3990"
+    assert h8["locked"] is False
 
 
-def test_catalog_components_hides_inactive_variants() -> None:
+def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
     component_service = PricingComponentService(repository=repository)
@@ -329,8 +340,34 @@ def test_catalog_components_hides_inactive_variants() -> None:
 
     response = catalog_service.list_components_for_catalog("website", "construction", "plus")
     hero_response = next(component for component in response["components"] if component["componentCode"] == "hero")
+    premium_variant = next(variant for variant in hero_response["variants"] if variant["variantCode"] == "hero-premium-video")
 
-    assert all(variant["variantCode"] != "hero-premium-video" for variant in hero_response["variants"])
+    assert premium_variant["status"] == "inactive"
+    assert premium_variant["label"] == "Inactivo"
+    assert premium_variant["locked"] is True
+
+
+def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    by_plan = service.list_components_for_catalog("website", "construction", "essential")
+    hero = next(component for component in by_plan["components"] if component["componentCode"] == "hero")
+    premium = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+
+    by_category = service.list_components_for_catalog("website", "beauty", "plus")
+    projects = next(component for component in by_category["components"] if component["componentCode"] == "projects")
+    project_variant = projects["variants"][0]
+
+    assert premium["status"] == "blocked_by_plan"
+    assert premium["label"] == "No disponible en Essential"
+    assert premium["locked"] is True
+    assert premium["lockReason"] == "Esta variante no está disponible en el plan Essential."
+    assert projects["allowedByCategory"] is False
+    assert project_variant["status"] == "blocked_by_category"
+    assert project_variant["label"] == "No disponible para esta categoría"
+    assert project_variant["locked"] is True
 
 
 def test_pricing_summary_builds_matrix_per_variant() -> None:
@@ -439,7 +476,7 @@ def test_pricing_summary_supports_legacy_component_documents() -> None:
     assert legacy["variants"][0]["matrix"]["plus"]["status"] == "included"
 
 
-def test_pricing_seed_skips_component_when_legacy_id_already_exists() -> None:
+def test_pricing_seed_updates_component_when_legacy_id_already_exists() -> None:
     repository = InMemoryPricingRepository()
     repository.collections[COMPONENTS_COLLECTION] = [
         {
@@ -471,7 +508,8 @@ def test_pricing_seed_skips_component_when_legacy_id_already_exists() -> None:
     stats = PricingComponentService(repository=repository).ensure_seed()
 
     assert stats.skippedComponents >= 1
-    assert repository.collections[COMPONENTS_COLLECTION][0]["componentCode"] == "legacy_navigation"
+    assert repository.collections[COMPONENTS_COLLECTION][0]["componentCode"] == "navigation"
+    assert repository.collections[COMPONENTS_COLLECTION][0]["variants"][0]["variantCode"] == "navigation-variant-a"
 
 
 def test_pricing_plan_list_normalizes_legacy_documents() -> None:
@@ -496,6 +534,18 @@ def test_pricing_plan_list_normalizes_legacy_documents() -> None:
     assert validated.currency == "CLP"
     assert validated.durationMonths == 12
     assert validated.sortOrder == 1
+
+
+def test_pricing_seed_uses_updated_website_plan_prices() -> None:
+    repository = InMemoryPricingRepository()
+
+    ensure_pricing_seed(repository=repository)
+    plus_web = PricingPlanService(repository=repository).find_by_tier("website", "plus")
+
+    assert plus_web["code"] == "plus_web"
+    assert plus_web["basePrice"] == 19990
+    assert plus_web["basePriceMonthly"] == 19990
+    assert plus_web["basePriceYearly"] == 199990
 
 
 def test_pricing_calculate_sums_plan_component_extras_and_general_extras() -> None:

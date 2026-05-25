@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
+from app.core.errors import NuvlyError
 from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, WebsiteTemplateCreate
 from app.modules.domain.services import (
     CUSTOMER_WEBSITE_CONFIG,
@@ -258,3 +259,41 @@ def test_pending_payment_requires_title_and_public_slug() -> None:
         assert getattr(exc, "code", None) == "PUBLIC_SLUG_REQUIRED"
     else:
         raise AssertionError("Expected PUBLIC_SLUG_REQUIRED")
+
+
+def test_template_create_rejects_variant_blocked_by_plan() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "essential"
+    payload["templateCategory"] = "construction"
+    payload["pages"][0]["blocks"][0]["variant"] = "hero-premium-video"
+
+    try:
+        template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "VARIANT_NOT_ALLOWED_FOR_PLAN"
+    else:
+        raise AssertionError("Expected VARIANT_NOT_ALLOWED_FOR_PLAN")
+
+
+def test_template_create_rejects_component_blocked_by_category() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "plus"
+    payload["templateCategory"] = "beauty"
+    payload["blocks"] = [
+        {"id": "blk_projects", "type": "projects", "variant": "projects-variant-a", "enabled": True, "order": 1, "props": {}, "settings": {}}
+    ]
+    payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
+    payload["layout"]["sectionOrder"] = ["blk_projects"]
+
+    try:
+        template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_CATEGORY"
+    else:
+        raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_CATEGORY")

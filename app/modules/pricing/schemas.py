@@ -6,7 +6,7 @@ from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, Varian
 
 CurrencyCode = Literal["CLP"]
 PriceUnit = Literal["component"]
-CatalogVariantStatus = Literal["included", "extra", "blocked_by_plan", "blocked_by_category", "inactive"]
+CatalogVariantStatus = Literal["included", "extra", "blocked_by_plan", "blocked_by_category", "inactive", "not_found"]
 SummaryVariantStatus = Literal["included", "extra", "blocked"]
 
 
@@ -17,6 +17,8 @@ class PricingPlanBase(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
     basePrice: int = Field(ge=0)
+    basePriceMonthly: int | None = Field(default=None, ge=0)
+    basePriceYearly: int | None = Field(default=None, ge=0)
     durationMonths: int = Field(ge=0)
     currency: CurrencyCode = "CLP"
     active: bool = True
@@ -116,6 +118,8 @@ class PricingSummaryPlan(BaseModel):
     tier: PlanTier
     name: str
     basePrice: int
+    basePriceMonthly: int | None = None
+    basePriceYearly: int | None = None
     currency: CurrencyCode
     includedCount: int
     extraCount: int
@@ -171,10 +175,14 @@ class CatalogComponentVariantResponse(BaseModel):
     name: str
     description: str = ""
     variantTier: VariantLevel
+    sortOrder: int = Field(default=1, ge=0)
     status: CatalogVariantStatus
+    label: str
     active: bool = True
     extraPrice: int = 0
     currency: CurrencyCode = "CLP"
+    locked: bool
+    lockReason: str | None = None
 
 
 class CatalogComponentResponse(BaseModel):
@@ -183,7 +191,8 @@ class CatalogComponentResponse(BaseModel):
     name: str
     description: str = ""
     active: bool = True
-    blockedByCategory: bool
+    sortOrder: int = Field(default=1, ge=0)
+    allowedByCategory: bool
     variants: List[CatalogComponentVariantResponse] = Field(default_factory=list)
 
 
@@ -191,7 +200,6 @@ class CatalogComponentsResponse(BaseModel):
     productType: ProductType
     templateCategory: TemplateCategoryCode
     planTier: PlanTier
-    categories: List[TemplateCategoryResponse] = Field(default_factory=list)
     components: List[CatalogComponentResponse] = Field(default_factory=list)
 
 
