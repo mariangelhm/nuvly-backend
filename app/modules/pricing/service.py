@@ -29,6 +29,38 @@ TEMPLATE_CATEGORIES_COLLECTION = "template_categories"
 GENERAL_EXTRAS = {item["code"]: item for item in GENERAL_EXTRA_SEEDS}
 
 
+def _normalize_plan_response_document(document: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = deepcopy(document)
+    normalized.setdefault("description", "")
+    normalized.setdefault("currency", "CLP")
+    normalized.setdefault("active", True)
+    normalized.setdefault("sortOrder", 1)
+    normalized.setdefault("durationMonths", 12)
+    return normalized
+
+
+def _normalize_component_response_document(document: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = deepcopy(document)
+    normalized.setdefault("description", "")
+    normalized.setdefault("active", True)
+    normalized.setdefault("sortOrder", 1)
+    normalized["categoryCode"] = (normalized.get("categoryCode") or normalized.get("componentCode") or "").strip()
+
+    normalized_variants: List[Dict[str, Any]] = []
+    for variant in normalized.get("variants") or []:
+        normalized_variant = deepcopy(variant)
+        normalized_variant.setdefault("description", "")
+        normalized_variant.setdefault("active", True)
+        normalized_variant.setdefault("includedInPlans", [])
+        normalized_variant.setdefault("canBeExtraInPlans", [])
+        normalized_variant.setdefault("extraPrice", 0)
+        normalized_variant.setdefault("currency", "CLP")
+        normalized_variant.setdefault("sortOrder", 1)
+        normalized_variants.append(normalized_variant)
+    normalized["variants"] = sorted(normalized_variants, key=lambda item: item.get("sortOrder", 0))
+    return normalized
+
+
 def _normalize_plan_document(document: Dict[str, Any]) -> Dict[str, Any]:
     normalized = deepcopy(document)
     normalized["code"] = (normalized.get("code") or "").strip()
@@ -144,17 +176,18 @@ class PricingPlanService:
             filters["productType"] = product_type
         if active is not None:
             filters["active"] = active
-        return self.repository.find_documents(
+        documents = self.repository.find_documents(
             PLANS_COLLECTION,
             filters,
             sort_fields=[("productType", 1), ("sortOrder", 1), ("name", 1)],
         )
+        return [_normalize_plan_response_document(document) for document in documents]
 
     def get(self, plan_id: str) -> Dict[str, Any]:
         document = self.repository.find_document(PLANS_COLLECTION, {"id": plan_id})
         if not document:
             raise NuvlyError("Plan comercial no encontrado.", 404, "PRICING_PLAN_NOT_FOUND")
-        return document
+        return _normalize_plan_response_document(document)
 
     def find_by_tier(self, product_type: ProductType, tier: PlanTier) -> Dict[str, Any]:
         document = self.repository.find_document(PLANS_COLLECTION, {"productType": product_type, "tier": tier, "active": True})
@@ -229,11 +262,12 @@ class TemplateCategoryService:
             filters["productType"] = product_type
         if active is not None:
             filters["active"] = active
-        return self.repository.find_documents(
+        documents = self.repository.find_documents(
             TEMPLATE_CATEGORIES_COLLECTION,
             filters,
             sort_fields=[("productType", 1), ("sortOrder", 1), ("name", 1)],
         )
+        return documents
 
     def get_by_code(self, product_type: ProductType, category_code: TemplateCategoryCode) -> Dict[str, Any]:
         document = self.repository.find_document(
@@ -327,6 +361,7 @@ class PricingComponentService:
             filters,
             sort_fields=[("productType", 1), ("sortOrder", 1), ("name", 1)],
         )
+        documents = [_normalize_component_response_document(document) for document in documents]
         if tier:
             documents = [
                 document
@@ -348,13 +383,13 @@ class PricingComponentService:
         document = self.repository.find_document(COMPONENTS_COLLECTION, {"id": component_id})
         if not document:
             raise NuvlyError("Componente comercial no encontrado.", 404, "PRICING_COMPONENT_NOT_FOUND")
-        return document
+        return _normalize_component_response_document(document)
 
     def get_by_component_code(self, product_type: ProductType, component_code: str) -> Dict[str, Any]:
         document = self.repository.find_document(COMPONENTS_COLLECTION, {"productType": product_type, "componentCode": component_code})
         if not document:
             raise NuvlyError("Componente comercial no encontrado.", 404, "PRICING_COMPONENT_NOT_FOUND")
-        return document
+        return _normalize_component_response_document(document)
 
     def find_variant(self, product_type: ProductType, component_code: str, variant_code: str) -> Dict[str, Any]:
         component = self.get_by_component_code(product_type, component_code)

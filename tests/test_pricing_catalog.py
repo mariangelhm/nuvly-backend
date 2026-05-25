@@ -6,9 +6,11 @@ from typing import Any, Dict, List, Optional
 from app.core.errors import NuvlyError
 from app.modules.pricing.schemas import (
     PricingCalculateRequest,
+    PricingComponentResponse,
     PricingComponentCreate,
     PricingComponentUpdate,
     PricingPlanCreate,
+    PricingPlanResponse,
     PricingPlanUpdate,
     PricingVariantUpdate,
     TemplateCategoryCreate,
@@ -344,6 +346,92 @@ def test_pricing_summary_builds_matrix_per_variant() -> None:
     assert premium_variant["matrix"]["essential"]["status"] == "blocked"
     assert premium_variant["matrix"]["plus"]["status"] == "extra"
     assert premium_variant["matrix"]["pro"]["status"] == "included"
+
+
+def test_pricing_component_list_normalizes_legacy_documents() -> None:
+    repository = InMemoryPricingRepository()
+    repository.collections[COMPONENTS_COLLECTION] = [
+        {
+            "id": "comp_legacy",
+            "componentCode": "hero",
+            "productType": "website",
+            "name": "Hero",
+            "variants": [
+                {
+                    "variantCode": "hero-basic",
+                    "name": "Hero basic",
+                    "variantTier": "core",
+                }
+            ],
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+    ]
+    service = PricingComponentService(repository=repository)
+
+    component = service.list(product_type="website")[0]
+    validated = PricingComponentResponse.model_validate(component)
+
+    assert validated.categoryCode == "hero"
+    assert validated.sortOrder == 1
+    assert validated.variants[0].currency == "CLP"
+    assert validated.variants[0].sortOrder == 1
+
+
+def test_pricing_summary_supports_legacy_component_documents() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    repository.collections[COMPONENTS_COLLECTION].append(
+        {
+            "id": "comp_legacy",
+            "componentCode": "legacy-gallery",
+            "productType": "website",
+            "name": "Legacy Gallery",
+            "active": True,
+            "sortOrder": 999,
+            "variants": [
+                {
+                    "variantCode": "legacy-gallery-basic",
+                    "name": "Legacy Gallery Basic",
+                    "variantTier": "core",
+                    "includedInPlans": ["essential", "plus", "pro"],
+                }
+            ],
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+    )
+    service = PricingSummaryService(repository=repository)
+
+    summary = service.build_summary(product_type="website")
+    legacy = next(component for component in summary["components"] if component["componentCode"] == "legacy-gallery")
+
+    assert legacy["categoryCode"] == "legacy-gallery"
+    assert legacy["variants"][0]["matrix"]["plus"]["status"] == "included"
+
+
+def test_pricing_plan_list_normalizes_legacy_documents() -> None:
+    repository = InMemoryPricingRepository()
+    repository.collections[PLANS_COLLECTION] = [
+        {
+            "id": "plan_legacy",
+            "code": "website_legacy",
+            "productType": "website",
+            "tier": "plus",
+            "name": "Legacy plan",
+            "basePrice": 10000,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+    ]
+    service = PricingPlanService(repository=repository)
+
+    plan = service.list(product_type="website")[0]
+    validated = PricingPlanResponse.model_validate(plan)
+
+    assert validated.currency == "CLP"
+    assert validated.durationMonths == 12
+    assert validated.sortOrder == 1
 
 
 def test_pricing_calculate_sums_plan_component_extras_and_general_extras() -> None:
