@@ -378,6 +378,35 @@ def test_pricing_component_list_normalizes_legacy_documents() -> None:
     assert validated.variants[0].sortOrder == 1
 
 
+def test_pricing_component_list_infers_missing_variant_tier_from_legacy_rules() -> None:
+    repository = InMemoryPricingRepository()
+    repository.collections[COMPONENTS_COLLECTION] = [
+        {
+            "id": "comp_legacy",
+            "componentCode": "hero",
+            "productType": "website",
+            "categoryCode": "hero",
+            "name": "Hero",
+            "variants": [
+                {
+                    "variantCode": "hero-premium-video",
+                    "name": "Hero Premium Video",
+                    "includedInPlans": ["pro"],
+                    "canBeExtraInPlans": ["plus"],
+                }
+            ],
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+    ]
+    service = PricingComponentService(repository=repository)
+
+    component = service.list(product_type="website")[0]
+    validated = PricingComponentResponse.model_validate(component)
+
+    assert validated.variants[0].variantTier == "premium"
+
+
 def test_pricing_summary_supports_legacy_component_documents() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
@@ -408,6 +437,41 @@ def test_pricing_summary_supports_legacy_component_documents() -> None:
 
     assert legacy["categoryCode"] == "legacy-gallery"
     assert legacy["variants"][0]["matrix"]["plus"]["status"] == "included"
+
+
+def test_pricing_seed_skips_component_when_legacy_id_already_exists() -> None:
+    repository = InMemoryPricingRepository()
+    repository.collections[COMPONENTS_COLLECTION] = [
+        {
+            "id": "comp_001",
+            "componentCode": "legacy_navigation",
+            "productType": "website",
+            "categoryCode": "legacy_navigation",
+            "name": "Legacy Navigation",
+            "description": "",
+            "active": True,
+            "variants": [
+                {
+                    "variantCode": "legacy-navigation-a",
+                    "name": "Legacy Navigation A",
+                    "variantTier": "core",
+                    "includedInPlans": ["essential", "plus", "pro"],
+                    "canBeExtraInPlans": [],
+                    "extraPrice": 0,
+                    "currency": "CLP",
+                    "sortOrder": 1,
+                }
+            ],
+            "sortOrder": 1,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+    ]
+
+    stats = PricingComponentService(repository=repository).ensure_seed()
+
+    assert stats.skippedComponents >= 1
+    assert repository.collections[COMPONENTS_COLLECTION][0]["componentCode"] == "legacy_navigation"
 
 
 def test_pricing_plan_list_normalizes_legacy_documents() -> None:

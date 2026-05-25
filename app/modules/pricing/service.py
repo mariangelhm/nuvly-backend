@@ -10,6 +10,8 @@ from app.core.catalog import (
     VALID_PRODUCT_TYPES,
     VALID_TEMPLATE_CATEGORIES,
     VALID_VARIANT_LEVELS,
+    infer_variant_level_from_plan_rules,
+    normalize_variant_level,
     PlanTier,
     ProductType,
     TemplateCategoryCode,
@@ -49,10 +51,27 @@ def _normalize_component_response_document(document: Dict[str, Any]) -> Dict[str
     normalized_variants: List[Dict[str, Any]] = []
     for variant in normalized.get("variants") or []:
         normalized_variant = deepcopy(variant)
+        included_in_plans = [tier for tier in (normalized_variant.get("includedInPlans") or []) if tier in VALID_PLAN_TIERS]
+        can_be_extra_in_plans = [tier for tier in (normalized_variant.get("canBeExtraInPlans") or []) if tier in VALID_PLAN_TIERS]
+        variant_code = (normalized_variant.get("variantCode") or "").strip()
+        variant_name = (normalized_variant.get("name") or "").strip()
+        if not variant_code or not variant_name:
+            logger.warning(
+                "Skipping malformed pricing variant without required identity fields | componentCode=%s | variant=%s",
+                normalized.get("componentCode"),
+                variant,
+            )
+            continue
+        normalized_variant["variantCode"] = variant_code
+        normalized_variant["name"] = variant_name
         normalized_variant.setdefault("description", "")
         normalized_variant.setdefault("active", True)
-        normalized_variant.setdefault("includedInPlans", [])
-        normalized_variant.setdefault("canBeExtraInPlans", [])
+        normalized_variant["includedInPlans"] = included_in_plans
+        normalized_variant["canBeExtraInPlans"] = can_be_extra_in_plans
+        normalized_variant["variantTier"] = normalize_variant_level(
+            normalized_variant.get("variantTier"),
+            default=infer_variant_level_from_plan_rules(included_in_plans, can_be_extra_in_plans),
+        )
         normalized_variant.setdefault("extraPrice", 0)
         normalized_variant.setdefault("currency", "CLP")
         normalized_variant.setdefault("sortOrder", 1)
@@ -235,20 +254,29 @@ class PricingPlanService:
         stats = empty_seed_stats()
         now = utc_now_iso()
         for seed in PLAN_SEEDS:
-            existing = self.repository.find_document(PLANS_COLLECTION, {"code": seed["code"]})
+            existing = self.repository.find_document(PLANS_COLLECTION, {"code": seed["code"]}) or self.repository.find_document(
+                PLANS_COLLECTION,
+                {"id": seed["id"]},
+            )
             if existing:
                 stats.skippedPlans += 1
                 continue
             document = _normalize_plan_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
-            self.repository.insert_document(
-                PLANS_COLLECTION,
-                document,
-                duplicate_message="Ya existe un plan comercial con ese code.",
-                duplicate_code="DUPLICATED_PLAN_CODE",
-            )
-            stats.insertedPlans += 1
+            try:
+                self.repository.insert_document(
+                    PLANS_COLLECTION,
+                    document,
+                    duplicate_message="Ya existe un plan comercial con ese code.",
+                    duplicate_code="DUPLICATED_PLAN_CODE",
+                )
+                stats.insertedPlans += 1
+            except NuvlyError as exc:
+                if exc.code != "DUPLICATED_PLAN_CODE":
+                    raise
+                logger.warning("Skipping legacy duplicate pricing plan seed | id=%s code=%s", seed["id"], seed["code"])
+                stats.skippedPlans += 1
         return stats
 
 
@@ -323,20 +351,31 @@ class TemplateCategoryService:
             existing = self.repository.find_document(
                 TEMPLATE_CATEGORIES_COLLECTION,
                 {"productType": seed["productType"], "categoryCode": seed["categoryCode"]},
-            )
+            ) or self.repository.find_document(TEMPLATE_CATEGORIES_COLLECTION, {"id": seed["id"]})
             if existing:
                 stats.skippedTemplateCategories += 1
                 continue
             document = _normalize_template_category_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
-            self.repository.insert_document(
-                TEMPLATE_CATEGORIES_COLLECTION,
-                document,
-                duplicate_message="Ya existe una categoria con ese productType y categoryCode.",
-                duplicate_code="DUPLICATED_TEMPLATE_CATEGORY",
-            )
-            stats.insertedTemplateCategories += 1
+            try:
+                self.repository.insert_document(
+                    TEMPLATE_CATEGORIES_COLLECTION,
+                    document,
+                    duplicate_message="Ya existe una categoria con ese productType y categoryCode.",
+                    duplicate_code="DUPLICATED_TEMPLATE_CATEGORY",
+                )
+                stats.insertedTemplateCategories += 1
+            except NuvlyError as exc:
+                if exc.code != "DUPLICATED_TEMPLATE_CATEGORY":
+                    raise
+                logger.warning(
+                    "Skipping legacy duplicate template category seed | id=%s productType=%s categoryCode=%s",
+                    seed["id"],
+                    seed["productType"],
+                    seed["categoryCode"],
+                )
+                stats.skippedTemplateCategories += 1
         return stats
 
 
@@ -485,20 +524,34 @@ class PricingComponentService:
         stats = empty_seed_stats()
         now = utc_now_iso()
         for seed in COMPONENT_SEEDS:
-            existing = self.repository.find_document(COMPONENTS_COLLECTION, {"productType": seed["productType"], "componentCode": seed["componentCode"]})
+            existing = self.repository.find_document(
+                COMPONENTS_COLLECTION,
+                {"productType": seed["productType"], "componentCode": seed["componentCode"]},
+            ) or self.repository.find_document(COMPONENTS_COLLECTION, {"id": seed["id"]})
             if existing:
                 stats.skippedComponents += 1
                 continue
             document = _normalize_component_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
-            self.repository.insert_document(
-                COMPONENTS_COLLECTION,
-                document,
-                duplicate_message="Ya existe un componente comercial con ese componentCode.",
-                duplicate_code="DUPLICATED_COMPONENT_CODE",
-            )
-            stats.insertedComponents += 1
+            try:
+                self.repository.insert_document(
+                    COMPONENTS_COLLECTION,
+                    document,
+                    duplicate_message="Ya existe un componente comercial con ese componentCode.",
+                    duplicate_code="DUPLICATED_COMPONENT_CODE",
+                )
+                stats.insertedComponents += 1
+            except NuvlyError as exc:
+                if exc.code != "DUPLICATED_COMPONENT_CODE":
+                    raise
+                logger.warning(
+                    "Skipping legacy duplicate pricing component seed | id=%s productType=%s componentCode=%s",
+                    seed["id"],
+                    seed["productType"],
+                    seed["componentCode"],
+                )
+                stats.skippedComponents += 1
         return stats
 
 
