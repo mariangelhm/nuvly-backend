@@ -418,6 +418,44 @@ def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -
         assert all(variant["extraPrice"] == 0 for variant in whatsapp["variants"])
 
 
+def test_catalog_components_blank_canvas_is_available_from_plus() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    essential = service.list_components_for_catalog("website", "construction", "essential")
+    essential_canvas = next(component for component in essential["components"] if component["componentCode"] == "blankCanvas")
+    essential_variant = essential_canvas["variants"][0]
+
+    plus = service.list_components_for_catalog("website", "construction", "plus")
+    plus_canvas = next(component for component in plus["components"] if component["componentCode"] == "blankCanvas")
+    plus_variant = plus_canvas["variants"][0]
+
+    pro = service.list_components_for_catalog("website", "construction", "pro")
+    pro_canvas = next(component for component in pro["components"] if component["componentCode"] == "blankCanvas")
+    pro_variant = pro_canvas["variants"][0]
+
+    assert essential_canvas["componentTier"] == "advanced"
+    assert essential_canvas["status"] == "blocked"
+    assert essential_canvas["locked"] is True
+    assert essential_canvas["label"] == "No disponible para este plan"
+    assert essential_variant["status"] == "blocked"
+    assert essential_variant["locked"] is True
+
+    assert plus_canvas["status"] == "included"
+    assert plus_canvas["locked"] is False
+    assert plus_canvas["label"] == "Disponible"
+    assert plus_variant["variantTier"] == "advanced"
+    assert plus_variant["status"] == "included"
+    assert plus_variant["locked"] is False
+    assert plus_variant["label"] == "Incluido"
+
+    assert pro_canvas["status"] == "included"
+    assert pro_canvas["locked"] is False
+    assert pro_variant["status"] == "included"
+    assert pro_variant["locked"] is False
+
+
 def test_pricing_summary_builds_matrix_per_variant() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)

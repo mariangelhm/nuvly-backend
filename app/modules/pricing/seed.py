@@ -261,8 +261,8 @@ COMPONENT_SEEDS: List[Dict[str, Any]] = [
         _variant("WA2", "Flotante con texto", "core", "website", 2),
         _variant("WA3", "Ayuda acoplada al footer", "core", "website", 3),
     ], name="WhatsApp flotante"),
-    _component("comp_012", "blankCanvas", "website", "premium", 12, [
-        _variant("FREE1", "Canvas libre", "premium", "website", 1),
+    _component("comp_012", "blankCanvas", "website", "advanced", 12, [
+        _variant("FREE1", "Canvas libre", "advanced", "website", 1),
     ], name="Canvas libre"),
     _component("comp_013", "content", "website", "core", 13, [
         _variant("N1", "Contenido base", "core", "website", 1),
