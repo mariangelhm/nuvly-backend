@@ -256,10 +256,10 @@ COMPONENT_SEEDS: List[Dict[str, Any]] = [
     _component("comp_010", "youtubeVideo", "website", "core", 10, [
         _variant("YT1", "Video YouTube", "core", "website", 1),
     ], name="Video YouTube"),
-    _component("comp_011", "whatsappFloating", "website", "core", 11, [
-        _variant("WA1", "Botón flotante simple", "core", "website", 1),
-        _variant("WA2", "Botón con texto", "core", "website", 2),
-        _variant("WA3", "WhatsApp contextual", "advanced", "website", 3),
+    _component("comp_011", "whatsapp_floating", "website", "core", 11, [
+        _variant("WA1", "Botón flotante", "core", "website", 1),
+        _variant("WA2", "Flotante con texto", "core", "website", 2),
+        _variant("WA3", "Ayuda acoplada al footer", "core", "website", 3),
     ], name="WhatsApp flotante"),
     _component("comp_012", "blankCanvas", "website", "premium", 12, [
         _variant("FREE1", "Canvas libre", "premium", "website", 1),
@@ -308,7 +308,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para constructoras, obras y servicios relacionados.",
         "active": True,
         "sortOrder": 1,
-        "allowedComponentCodes": ["navigation", "hero", "projects", "beforeAfter", "services", "process", "socialProof", "branches", "immersiveVideo", "youtubeVideo", "whatsappFloating", "blankCanvas", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "projects", "beforeAfter", "services", "process", "socialProof", "branches", "immersiveVideo", "youtubeVideo", "whatsapp_floating", "blankCanvas", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_002",
@@ -318,7 +318,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para belleza y bienestar.",
         "active": True,
         "sortOrder": 2,
-        "allowedComponentCodes": ["navigation", "hero", "services", "socialProof", "youtubeVideo", "whatsappFloating", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "services", "socialProof", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_003",
@@ -328,7 +328,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para servicios tecnicos y mantenimiento.",
         "active": True,
         "sortOrder": 3,
-        "allowedComponentCodes": ["navigation", "hero", "services", "process", "socialProof", "branches", "youtubeVideo", "whatsappFloating", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "services", "process", "socialProof", "branches", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_004",
@@ -338,7 +338,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para gastronomia.",
         "active": True,
         "sortOrder": 4,
-        "allowedComponentCodes": ["navigation", "hero", "gallery", "services", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "gallery", "services", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_005",
@@ -348,7 +348,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para profesionales creativos.",
         "active": True,
         "sortOrder": 5,
-        "allowedComponentCodes": ["navigation", "hero", "projects", "gallery", "socialProof", "content", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "projects", "gallery", "socialProof", "youtubeVideo", "whatsapp_floating", "content", "footer"],
     },
     {
         "id": "cat_006",
@@ -358,7 +358,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para empresas.",
         "active": True,
         "sortOrder": 6,
-        "allowedComponentCodes": ["navigation", "hero", "projects", "beforeAfter", "services", "process", "socialProof", "youtubeVideo", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "projects", "beforeAfter", "services", "process", "socialProof", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_007",
@@ -368,7 +368,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para salud y bienestar.",
         "active": True,
         "sortOrder": 7,
-        "allowedComponentCodes": ["navigation", "hero", "services", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "services", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_008",
@@ -378,7 +378,7 @@ TEMPLATE_CATEGORY_SEEDS: List[Dict[str, Any]] = [
         "description": "Templates para educacion y cursos.",
         "active": True,
         "sortOrder": 8,
-        "allowedComponentCodes": ["navigation", "hero", "services", "content", "leadForm", "footer"],
+        "allowedComponentCodes": ["navigation", "hero", "services", "youtubeVideo", "whatsapp_floating", "content", "leadForm", "footer"],
     },
     {
         "id": "cat_009",

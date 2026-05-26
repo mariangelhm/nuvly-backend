@@ -398,6 +398,26 @@ def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> Non
     assert project_variant["locked"] is True
 
 
+def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    for plan_tier in ("essential", "plus", "pro", "custom"):
+        response = service.list_components_for_catalog("website", "construction", plan_tier)
+        whatsapp = next(component for component in response["components"] if component["componentCode"] == "whatsapp_floating")
+
+        assert whatsapp["name"] == "WhatsApp flotante"
+        assert whatsapp["componentTier"] == "core"
+        assert whatsapp["status"] == "included"
+        assert whatsapp["locked"] is False
+        assert whatsapp["label"] == "Disponible"
+        assert [variant["variantCode"] for variant in whatsapp["variants"]] == ["WA1", "WA2", "WA3"]
+        assert all(variant["status"] == "included" for variant in whatsapp["variants"])
+        assert all(variant["locked"] is False for variant in whatsapp["variants"])
+        assert all(variant["extraPrice"] == 0 for variant in whatsapp["variants"])
+
+
 def test_pricing_summary_builds_matrix_per_variant() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
