@@ -345,3 +345,25 @@ class PublicTemplateCardResponse(BaseModel):
     updatedAt: Optional[str] = None
     lastPublishedAt: Optional[str] = None
     publishedSnapshotId: Optional[str] = None
+
+
+class StudioRecentActivityItem(BaseModel):
+    id: str
+    title: str
+    subtitle: str
+    type: Literal["template", "project", "invitation", "component", "configuration", "customer"]
+    createdAt: str
+
+
+class StudioQuickSummaryResponse(BaseModel):
+    webTemplates: int = 0
+    invitationTemplates: int = 0
+    webComponents: int = 0
+    invitationComponents: int = 0
+    extras: int = 0
+    activeUsers: int = 0
+
+
+class StudioDashboardResponse(BaseModel):
+    recentActivity: List[StudioRecentActivityItem] = Field(default_factory=list)
+    quickSummary: StudioQuickSummaryResponse = Field(default_factory=StudioQuickSummaryResponse)

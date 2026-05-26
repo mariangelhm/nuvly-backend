@@ -13,6 +13,7 @@ from app.modules.catalog.routes import router as catalog_router
 from app.modules.domain.customer_routes import router as customer_router
 from app.modules.domain.public_routes import router as public_router
 from app.modules.domain.published_routes import router as domain_published_router
+from app.modules.domain.studio_routes import admin_router as studio_admin_router
 from app.modules.domain.studio_routes import router as studio_router
 from app.modules.health.routes import router as health_router
 from app.modules.media.routes import router as media_router
@@ -93,6 +94,7 @@ app.include_router(catalog_admin_router, prefix=settings.api_prefix)
 app.include_router(pricing_router, prefix=settings.api_prefix)
 app.include_router(pricing_admin_router, prefix=settings.api_prefix)
 app.include_router(studio_router, prefix=settings.api_prefix)
+app.include_router(studio_admin_router, prefix=settings.api_prefix)
 app.include_router(public_router, prefix=settings.api_prefix)
 app.include_router(customer_router, prefix=settings.api_prefix)
 app.include_router(domain_published_router, prefix=settings.api_prefix)

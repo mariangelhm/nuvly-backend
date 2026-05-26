@@ -1,11 +1,17 @@
+from datetime import datetime, timezone
+from typing import Any
+
 from fastapi import APIRouter, Query
 
 from app.core.catalog import VariantLevel
+from app.core.database import get_database
 from app.modules.domain.schemas import (
     InvitationTemplateCreate,
     InvitationTemplateResponse,
     InvitationTemplateUpdate,
     SnapshotResponse,
+    StudioDashboardResponse,
+    StudioQuickSummaryResponse,
     TemplateStatus,
     TemplateStatusUpdate,
     WebsiteTemplateCreate,
@@ -19,8 +25,123 @@ from app.modules.domain.services import (
 )
 
 router = APIRouter(prefix="/studio", tags=["studio"])
+admin_router = APIRouter(prefix="/admin/studio", tags=["admin-studio"])
 invitation_service = TemplateService(INVITATION_TEMPLATE_CONFIG)
 website_service = TemplateService(WEBSITE_TEMPLATE_CONFIG)
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = value.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _relative_time_label(value: str | None) -> str:
+    parsed = _parse_iso_datetime(value)
+    if not parsed:
+        return "Hace un momento"
+    delta = datetime.now(timezone.utc) - parsed
+    total_seconds = max(int(delta.total_seconds()), 0)
+    if total_seconds < 60:
+        return "Hace un momento"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"Hace {minutes} minuto{'s' if minutes != 1 else ''}"
+    hours = minutes // 60
+    if hours < 24:
+        return f"Hace {hours} hora{'s' if hours != 1 else ''}"
+    days = hours // 24
+    return f"Hace {days} día{'s' if days != 1 else ''}"
+
+
+def _collection_exists(db: Any, collection_name: str) -> bool:
+    try:
+        return collection_name in db.list_collection_names()
+    except Exception:
+        return False
+
+
+def _count_documents_if_collection_exists(db: Any, collection_name: str, filters: dict[str, Any]) -> int:
+    if not _collection_exists(db, collection_name):
+        return 0
+    return db[collection_name].count_documents(filters)
+
+
+def _build_recent_activity() -> list[dict[str, Any]]:
+    db = get_database()
+    events: list[dict[str, Any]] = []
+
+    def add_event(event_id: str, title: str, event_type: str, created_at: str | None) -> None:
+        if not created_at:
+            return
+        events.append(
+            {
+                "id": event_id,
+                "title": title,
+                "subtitle": f"Por Admin Studio · {_relative_time_label(created_at)}",
+                "type": event_type,
+                "createdAt": created_at,
+            }
+        )
+
+    if _collection_exists(db, "website_templates"):
+        for document in db["website_templates"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1}).limit(50):
+            add_event(f"{document['id']}:created", f'Template "{document.get("title") or "Sin nombre"}" creado', "template", document.get("createdAt"))
+            add_event(f"{document['id']}:published", f'Template "{document.get("title") or "Sin nombre"}" publicado', "template", document.get("lastPublishedAt"))
+
+    if _collection_exists(db, "invitation_templates"):
+        for document in db["invitation_templates"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1}).limit(50):
+            add_event(f"{document['id']}:created", f'Template "{document.get("title") or "Sin nombre"}" creado', "template", document.get("createdAt"))
+            add_event(f"{document['id']}:published", f'Template "{document.get("title") or "Sin nombre"}" publicado', "template", document.get("lastPublishedAt"))
+
+    if _collection_exists(db, "customer_websites"):
+        for document in db["customer_websites"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1}).limit(50):
+            title = document.get("title") or "Proyecto sin nombre"
+            add_event(f"{document['id']}:created", f'Proyecto "{title}" creado', "project", document.get("createdAt"))
+            add_event(f"{document['id']}:paid", f'Proyecto "{title}" pagado', "project", (document.get("payment") or {}).get("paidAt"))
+            add_event(f"{document['id']}:published", f'Proyecto "{title}" publicado', "project", document.get("lastPublishedAt"))
+
+    if _collection_exists(db, "customer_invitations"):
+        for document in db["customer_invitations"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1}).limit(50):
+            title = document.get("title") or "Invitación sin nombre"
+            add_event(f"{document['id']}:created", f'Invitación "{title}" creada', "invitation", document.get("createdAt"))
+            add_event(f"{document['id']}:paid", f'Invitación "{title}" pagada', "invitation", (document.get("payment") or {}).get("paidAt"))
+            add_event(f"{document['id']}:published", f'Invitación "{title}" publicada', "invitation", document.get("lastPublishedAt"))
+
+    if _collection_exists(db, "pricing_plans"):
+        for document in db["pricing_plans"].find({}, {"_id": 0, "id": 1, "name": 1, "updatedAt": 1}).limit(50):
+            add_event(f"{document['id']}:updated", f'Plan "{document.get("name") or "Sin nombre"}" actualizado', "configuration", document.get("updatedAt"))
+
+    if _collection_exists(db, "pricing_components"):
+        for document in db["pricing_components"].find({}, {"_id": 0, "id": 1, "name": 1, "updatedAt": 1}).limit(50):
+            add_event(f"{document['id']}:updated", f'Componente "{document.get("name") or "Sin nombre"}" actualizado', "component", document.get("updatedAt"))
+
+    if _collection_exists(db, "users"):
+        for document in db["users"].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "createdAt": 1}).limit(50):
+            title = document.get("name") or document.get("email") or "Usuario"
+            add_event(f"{document['id']}:created", f'Cliente "{title}" registrado', "customer", document.get("createdAt"))
+
+    events.sort(key=lambda item: _parse_iso_datetime(item["createdAt"]) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    return events[:10]
+
+
+def _build_quick_summary() -> StudioQuickSummaryResponse:
+    db = get_database()
+    return StudioQuickSummaryResponse(
+        webTemplates=_count_documents_if_collection_exists(db, "website_templates", {}),
+        invitationTemplates=_count_documents_if_collection_exists(db, "invitation_templates", {}),
+        webComponents=_count_documents_if_collection_exists(db, "pricing_components", {"productType": "website"}),
+        invitationComponents=_count_documents_if_collection_exists(db, "pricing_components", {"productType": "invitation"}),
+        extras=_count_documents_if_collection_exists(db, "pricing_extras", {"active": True}),
+        activeUsers=_count_documents_if_collection_exists(db, "users", {"active": True}),
+    )
 
 
 @router.post("/invitation-templates", response_model=InvitationTemplateResponse, status_code=201)
@@ -105,3 +226,11 @@ def publish_website_template(template_id: str):
 @router.post("/website-templates/{template_id}/unpublish", response_model=WebsiteTemplateResponse)
 def unpublish_website_template(template_id: str):
     return website_service.unpublish(template_id)
+
+
+@admin_router.get("/dashboard", response_model=StudioDashboardResponse)
+def get_studio_dashboard():
+    return {
+        "recentActivity": _build_recent_activity(),
+        "quickSummary": _build_quick_summary(),
+    }
