@@ -146,6 +146,7 @@ def _component_payload() -> Dict[str, Any]:
         "componentCode": "hero",
         "productType": "website",
         "categoryCode": "hero",
+        "componentTier": "core",
         "name": "Hero",
         "description": "Hero comercial.",
         "active": True,
@@ -310,12 +311,12 @@ def test_catalog_components_calculates_variant_statuses() -> None:
     response = service.list_components_for_catalog("website", "construction", "plus")
 
     hero = next(component for component in response["components"] if component["componentCode"] == "hero")
-    h1 = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-a")
-    h8 = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+    h1 = next(variant for variant in hero["variants"] if variant["variantCode"] == "H1")
+    h8 = next(variant for variant in hero["variants"] if variant["variantCode"] == "H8")
 
     assert response["templateCategory"] == "construction"
-    assert hero["name"] == "Hero"
-    assert hero["description"] == ""
+    assert hero["name"] == "Hero Dinámico"
+    assert hero["description"] == "Sección principal de alto impacto."
     assert hero["categoryCode"] == "hero"
     assert hero["categoryLabel"] == "Construcción"
     assert hero["componentTier"] == "core"
@@ -344,11 +345,11 @@ def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
     catalog_service = CatalogService(repository=repository)
 
     hero = next(component for component in component_service.list(product_type="website") if component["componentCode"] == "hero")
-    component_service.update_variant_active(hero["id"], "hero-premium-video", False)
+    component_service.update_variant_active(hero["id"], "H8", False)
 
     response = catalog_service.list_components_for_catalog("website", "construction", "plus")
     hero_response = next(component for component in response["components"] if component["componentCode"] == "hero")
-    premium_variant = next(variant for variant in hero_response["variants"] if variant["variantCode"] == "hero-premium-video")
+    premium_variant = next(variant for variant in hero_response["variants"] if variant["variantCode"] == "H8")
 
     assert premium_variant["status"] == "inactive"
     assert premium_variant["label"] == "Inactivo"
@@ -363,7 +364,7 @@ def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> Non
 
     by_plan = service.list_components_for_catalog("website", "construction", "essential")
     hero = next(component for component in by_plan["components"] if component["componentCode"] == "hero")
-    premium = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+    premium = next(variant for variant in hero["variants"] if variant["variantCode"] == "H8")
     lead_form = next(component for component in by_plan["components"] if component["componentCode"] == "leadForm")
     lead_form_variant = lead_form["variants"][0]
 
@@ -404,7 +405,7 @@ def test_pricing_summary_builds_matrix_per_variant() -> None:
 
     summary = service.build_summary(product_type="website")
     hero = next(component for component in summary["components"] if component["componentCode"] == "hero")
-    premium_variant = next(variant for variant in hero["variants"] if variant["variantCode"] == "hero-premium-video")
+    premium_variant = next(variant for variant in hero["variants"] if variant["variantCode"] == "H8")
 
     assert premium_variant["variantTier"] == "premium"
     assert premium_variant["matrix"]["essential"]["status"] == "blocked"
@@ -454,8 +455,8 @@ def test_pricing_component_list_infers_missing_variant_tier_from_legacy_rules() 
             "name": "Hero",
             "variants": [
                 {
-                    "variantCode": "hero-premium-video",
-                    "name": "Hero Premium Video",
+                    "variantCode": "H8",
+                    "name": "Editorial con video subido",
                     "includedInPlans": ["pro"],
                     "canBeExtraInPlans": ["plus"],
                 }
@@ -537,7 +538,7 @@ def test_pricing_seed_updates_component_when_legacy_id_already_exists() -> None:
 
     assert stats.skippedComponents >= 1
     assert repository.collections[COMPONENTS_COLLECTION][0]["componentCode"] == "navigation"
-    assert repository.collections[COMPONENTS_COLLECTION][0]["variants"][0]["variantCode"] == "navigation-variant-a"
+    assert repository.collections[COMPONENTS_COLLECTION][0]["variants"][0]["variantCode"] == "N1"
 
 
 def test_pricing_plan_list_normalizes_legacy_documents() -> None:

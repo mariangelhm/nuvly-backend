@@ -99,7 +99,7 @@ class InMemoryDomainRepository:
 
 
 def _website_payload() -> Dict[str, Any]:
-    root_blocks = [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {"headline": "Hola"}, "settings": {}}]
+    root_blocks = [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {"headline": "Hola"}, "settings": {}}]
     return {
         "title": "Buildframe",
         "slug": "buildframe",
@@ -268,7 +268,7 @@ def test_template_create_rejects_variant_blocked_by_plan() -> None:
     payload = _website_payload()
     payload["planTier"] = "essential"
     payload["templateCategory"] = "construction"
-    payload["pages"][0]["blocks"][0]["variant"] = "hero-premium-video"
+    payload["pages"][0]["blocks"][0]["variant"] = "H8"
 
     try:
         template_service.create(WebsiteTemplateCreate.model_validate(payload))
@@ -286,7 +286,7 @@ def test_template_create_rejects_component_blocked_by_plan_before_variant() -> N
     payload["planTier"] = "essential"
     payload["templateCategory"] = "construction"
     payload["blocks"] = [
-        {"id": "blk_lead_form", "type": "leadForm", "variant": "leadForm-variant-a", "enabled": True, "order": 1, "props": {}, "settings": {}}
+        {"id": "blk_lead_form", "type": "leadForm", "variant": "Q1", "enabled": True, "order": 1, "props": {}, "settings": {}}
     ]
     payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
     payload["layout"]["sectionOrder"] = ["blk_lead_form"]
@@ -307,7 +307,7 @@ def test_template_create_rejects_component_blocked_by_category() -> None:
     payload["planTier"] = "plus"
     payload["templateCategory"] = "beauty"
     payload["blocks"] = [
-        {"id": "blk_projects", "type": "projects", "variant": "projects-variant-a", "enabled": True, "order": 1, "props": {}, "settings": {}}
+        {"id": "blk_projects", "type": "projects", "variant": "G1", "enabled": True, "order": 1, "props": {}, "settings": {}}
     ]
     payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
     payload["layout"]["sectionOrder"] = ["blk_projects"]

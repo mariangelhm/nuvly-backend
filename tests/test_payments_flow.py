@@ -101,7 +101,7 @@ def _website_payload() -> Dict[str, Any]:
         "experienceType": "web",
         "styles": {"themeId": "sunrise"},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
         "metadata": {"category": "landing", "coverImage": "/assets/cover.jpg", "tags": ["agency"], "basePrice": 149},
         "websiteData": {"industry": "creative-services", "businessName": "Buildframe"},
