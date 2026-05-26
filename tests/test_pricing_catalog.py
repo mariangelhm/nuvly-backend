@@ -456,6 +456,26 @@ def test_catalog_components_blank_canvas_is_available_from_plus() -> None:
     assert pro_variant["locked"] is False
 
 
+def test_catalog_components_pro_ignores_category_block_for_active_components() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    response = service.list_components_for_catalog("website", "corporate", "pro")
+    branches = next(component for component in response["components"] if component["componentCode"] == "branches")
+    immersive_video = next(component for component in response["components"] if component["componentCode"] == "immersiveVideo")
+    blank_canvas = next(component for component in response["components"] if component["componentCode"] == "blankCanvas")
+
+    for component in (branches, immersive_video, blank_canvas):
+        assert component["allowedByCategory"] is True
+        assert component["status"] == "included"
+        assert component["locked"] is False
+        assert component["label"] == "Disponible"
+        assert component["lockLabel"] == ""
+        assert all(variant["status"] == "included" for variant in component["variants"])
+        assert all(variant["locked"] is False for variant in component["variants"])
+
+
 def test_pricing_summary_builds_matrix_per_variant() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)

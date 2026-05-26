@@ -739,7 +739,7 @@ class CatalogService:
         response_components: List[Dict[str, Any]] = []
 
         for component in components:
-            component_allowed = component["componentCode"] in allowed_codes
+            component_allowed = component["componentCode"] in allowed_codes or plan_tier in {"pro", "custom"}
             component_availability = build_component_catalog_state(
                 component_tier=component["componentTier"],
                 plan_tier=plan_tier,
