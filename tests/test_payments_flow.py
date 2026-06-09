@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
+from app.core.config import get_settings
 from app.modules.domain.schemas import CustomerData, CustomerProjectCreate, WebsiteTemplateCreate
 from app.modules.domain.services import CUSTOMER_WEBSITE_CONFIG, CustomerProjectService, WEBSITE_TEMPLATE_CONFIG, TemplateService
 from app.modules.payments.schemas import CreateCheckoutRequest, PaymentWebhookPayload
@@ -142,8 +143,11 @@ def test_create_checkout_sets_project_to_pending_payment_and_creates_payment() -
 
     stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
     assert payment["status"] == "pending"
+    assert payment["paymentId"] == payment["id"]
     assert payment["projectId"] == project["id"]
     assert payment["checkoutUrl"]
+    assert payment["withCustomDomain"] is False
+    assert payment["customDomainSurcharge"] == 0
     assert stored_project is not None
     assert stored_project["customerStatus"] == "pending_payment"
     assert stored_project["payment"]["status"] == "pending"
@@ -151,10 +155,36 @@ def test_create_checkout_sets_project_to_pending_payment_and_creates_payment() -
     assert stored_project["statusHistory"][-1]["status"] == "pending_payment"
 
 
+def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_choice() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+
+    payment = service.create_checkout(
+        CreateCheckoutRequest(
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+            withCustomDomain=True,
+            customDomain="www.buildframe.cl",
+        )
+    )
+
+    stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
+    assert payment["withCustomDomain"] is True
+    assert payment["customDomain"] == "www.buildframe.cl"
+    assert payment["customDomainSurcharge"] == 15000
+    assert payment["amount"] == 15149
+    assert "dominio propio" in payment["domainOptionExplanation"].lower()
+    assert stored_project is not None
+    assert stored_project["customDomain"] == "www.buildframe.cl"
+
+
 def test_approved_webhook_marks_payment_paid_and_project_paid() -> None:
     repository = InMemoryDomainRepository()
     project = _create_customer_project(repository)
     service = PaymentService(repository=repository)
+    get_settings.cache_clear()
     payment = service.create_checkout(
         CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="transbank")
     )
@@ -166,11 +196,40 @@ def test_approved_webhook_marks_payment_paid_and_project_paid() -> None:
 
     stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
     assert updated_payment["status"] == "paid"
+    assert updated_payment["websiteUrl"].endswith("/w/buildframe-lara")
     assert stored_project is not None
-    assert stored_project["customerStatus"] == "paid"
+    assert stored_project["customerStatus"] == "published"
     assert stored_project["payment"]["status"] == "paid"
     assert stored_project["payment"]["paidAt"] is not None
-    assert stored_project["statusHistory"][-1]["status"] == "paid"
+    assert stored_project["publishedSnapshotId"] is not None
+    assert stored_project["statusHistory"][-1]["status"] == "published"
+
+
+def test_approved_webhook_with_custom_domain_does_not_auto_publish_or_return_nuvly_url() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+    payment = service.create_checkout(
+        CreateCheckoutRequest(
+            projectType="website",
+            projectId=project["id"],
+            provider="transbank",
+            withCustomDomain=True,
+            customDomain="www.buildframe.cl",
+        )
+    )
+
+    updated_payment = service.process_webhook(
+        "transbank",
+        PaymentWebhookPayload(paymentId=payment["id"], status="approved", providerPaymentId="tbk_123"),
+    )
+
+    stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
+    assert updated_payment["status"] == "paid"
+    assert "websiteUrl" not in updated_payment
+    assert stored_project is not None
+    assert stored_project["customerStatus"] == "paid"
+    assert stored_project["publishedSnapshotId"] is None
 
 
 def test_failed_webhook_marks_payment_failed_and_project_payment_failed() -> None:

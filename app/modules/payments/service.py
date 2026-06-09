@@ -19,6 +19,12 @@ from app.modules.domain.services import (
 
 logger = logging.getLogger(__name__)
 
+CUSTOM_DOMAIN_SURCHARGE_CLP = 15000
+CUSTOM_DOMAIN_EXPLANATION = (
+    "Un dominio propio permite publicar tu sitio con una direccion personalizada "
+    "como www.tumarca.cl. Si no lo eliges, publicaremos tu web en una URL de Nuvly."
+)
+
 
 @dataclass(frozen=True)
 class PaymentProjectConfig:
@@ -50,20 +56,32 @@ class PaymentService:
         base_url = (settings.public_base_url or "http://localhost:8000").rstrip("/")
         return f"{base_url}/checkout/{provider}/{quote(payment_id)}"
 
+    def _build_public_website_url(self, public_slug: str) -> str:
+        settings = get_settings()
+        base_url = (settings.public_base_url or "http://localhost:8000").rstrip("/")
+        return f"{base_url}/w/{quote(public_slug)}"
+
     def create_checkout(self, payload) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
         project_service._validate_ready_for_pending_payment(project)
 
-        amount = float((project.get("metadata") or {}).get("basePrice") or 0)
-        if amount <= 0:
+        base_amount = float((project.get("metadata") or {}).get("basePrice") or 0)
+        if base_amount <= 0:
             raise NuvlyError("El proyecto no tiene un precio base valido para checkout.", 400, "INVALID_PROJECT_PRICE")
+        if payload.withCustomDomain and payload.projectType != "website":
+            raise NuvlyError("El dominio propio solo esta disponible para websites.", 400, "CUSTOM_DOMAIN_NOT_SUPPORTED")
+
+        custom_domain = (payload.customDomain or "").strip() or None
+        custom_domain_surcharge = CUSTOM_DOMAIN_SURCHARGE_CLP if payload.withCustomDomain else 0
+        amount = base_amount + custom_domain_surcharge
 
         now = utc_now_iso()
         payment_id = new_id("pay")
         checkout_url = self._build_checkout_url(payload.provider, payment_id)
         payment_document = {
             "id": payment_id,
+            "paymentId": payment_id,
             "projectType": payload.projectType,
             "projectId": payload.projectId,
             "provider": payload.provider,
@@ -71,6 +89,10 @@ class PaymentService:
             "amount": amount,
             "currency": "CLP",
             "checkoutUrl": checkout_url,
+            "withCustomDomain": payload.withCustomDomain,
+            "customDomain": custom_domain,
+            "customDomainSurcharge": custom_domain_surcharge,
+            "domainOptionExplanation": CUSTOM_DOMAIN_EXPLANATION if payload.projectType == "website" else None,
             "providerPaymentId": None,
             "createdAt": now,
             "updatedAt": now,
@@ -89,17 +111,20 @@ class PaymentService:
 
         updated_project = dict(project)
         updated_project["payment"] = payment_info
+        if payload.projectType == "website":
+            updated_project["customDomain"] = custom_domain if payload.withCustomDomain else None
         if updated_project["customerStatus"] != "pending_payment":
             updated_project["customerStatus"] = "pending_payment"
             append_status_history(updated_project, "customerStatus", "payments", "checkout_created")
         updated_project["updatedAt"] = now
 
         logger.info(
-            "Creating checkout | projectType=%s projectId=%s provider=%s amount=%s",
+            "Creating checkout | projectType=%s projectId=%s provider=%s amount=%s withCustomDomain=%s",
             payload.projectType,
             payload.projectId,
             payload.provider,
             amount,
+            payload.withCustomDomain,
         )
 
         self.repository.insert_document(
@@ -135,6 +160,7 @@ class PaymentService:
         payment_info["providerPaymentId"] = payload.providerPaymentId
         payment_info["amount"] = updated_payment.get("amount")
         payment_info["currency"] = updated_payment.get("currency")
+        public_website_url: str | None = None
 
         if payload.status == "approved":
             updated_payment["status"] = "paid"
@@ -172,6 +198,31 @@ class PaymentService:
             project_service.config.duplicate_message,
         )
 
+        if (
+            payload.status == "approved"
+            and payment["projectType"] == "website"
+            and not payment.get("withCustomDomain")
+            and updated_project.get("publicSlug")
+        ):
+            published_snapshot = project_service.publish(
+                project["id"],
+                changed_by=provider,
+                reason="payment_approved_auto_publish",
+            )
+            updated_project = project_service.get(project["id"])
+            public_website_url = self._build_public_website_url(updated_project["publicSlug"])
+            updated_payment["websiteUrl"] = public_website_url
+            updated_payment["publishedSnapshotId"] = published_snapshot["id"]
+            self.repository.replace_document(
+                self._payments_collection_name(),
+                updated_payment["id"],
+                updated_payment,
+                "Pago no encontrado.",
+                "PAYMENT_NOT_FOUND",
+                "Ya existe un pago duplicado.",
+                duplicate_code="DUPLICATED_PAYMENT_ID",
+            )
+
         logger.info(
             "Payment webhook processed | provider=%s paymentId=%s projectType=%s projectId=%s status=%s",
             provider,
@@ -180,4 +231,6 @@ class PaymentService:
             updated_payment["projectId"],
             updated_payment["status"],
         )
+        if public_website_url:
+            updated_payment["websiteUrl"] = public_website_url
         return updated_payment
