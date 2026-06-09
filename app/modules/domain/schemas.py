@@ -32,6 +32,7 @@ class ExperienceBlock(BaseModel):
     id: str
     type: str
     variant: str
+    customVariant: Optional[bool] = None
     enabled: bool = True
     order: int = Field(default=1, ge=1)
     props: Dict[str, Any] = Field(default_factory=dict)
@@ -102,6 +103,7 @@ class WebsiteBlock(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None
     variant: str
+    customVariant: Optional[bool] = None
     enabled: bool = True
     order: int = Field(default=1, ge=1)
     props: Dict[str, Any] = Field(default_factory=dict)
@@ -166,6 +168,7 @@ class InvitationTemplateCreate(BaseModel):
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     model_config = ConfigDict(extra="ignore")
 
 
@@ -183,6 +186,7 @@ class WebsiteTemplateCreate(BaseModel):
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -200,6 +204,7 @@ class InvitationTemplateUpdate(BaseModel):
     metadata: Optional[Metadata] = None
     invitationData: Optional[InvitationData] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     model_config = ConfigDict(extra="ignore")
 
 
@@ -217,6 +222,7 @@ class WebsiteTemplateUpdate(BaseModel):
     seo: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     model_config = ConfigDict(extra="allow")
 
 
@@ -268,6 +274,7 @@ class CustomerInvitationUpdate(BaseModel):
     invitationData: Optional[InvitationData] = None
     customerData: Optional[CustomerData] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     guests: Optional[List[Dict[str, Any]]] = None
     rsvpResponses: Optional[List[Dict[str, Any]]] = None
     personalizedMessages: Optional[List[Dict[str, Any]]] = None
@@ -290,6 +297,7 @@ class CustomerWebsiteUpdate(BaseModel):
     websiteData: Optional[WebsiteData] = None
     customerData: Optional[CustomerData] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
+    commercialValidationSkipped: Optional[bool] = None
     leadForms: Optional[List[Dict[str, Any]]] = None
     formSubmissions: Optional[List[Dict[str, Any]]] = None
     customDomain: Optional[str] = None

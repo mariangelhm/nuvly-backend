@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.errors import NuvlyError
-from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, WebsiteTemplateCreate
+from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, CustomerWebsiteUpdate, WebsiteTemplateCreate, WebsiteTemplateUpdate
 from app.modules.domain.services import (
     CUSTOMER_WEBSITE_CONFIG,
     WEBSITE_TEMPLATE_CONFIG,
@@ -318,3 +318,131 @@ def test_template_create_rejects_component_blocked_by_category() -> None:
         assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_CATEGORY"
     else:
         raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+
+
+def test_template_create_allows_custom_plan_with_unknown_variant_and_marks_flags() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"][0]["type"] = "dashboard"
+    payload["pages"][0]["blocks"][0]["variant"] = "analytics-v99"
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["planTier"] == "custom"
+    assert created["commercialValidationSkipped"] is True
+    assert created["pages"][0]["blocks"][0]["customVariant"] is True
+    assert created["blocks"][0]["customVariant"] is True
+
+
+def test_template_update_allows_custom_plan_with_unknown_variant_and_marks_flags() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+
+    payload = _website_payload()
+    payload["title"] = "Buildframe Custom"
+    payload["slug"] = created["slug"]
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"][0]["type"] = "wizard"
+    payload["pages"][0]["blocks"][0]["variant"] = "stepper-enterprise"
+
+    updated = template_service.update(created["id"], WebsiteTemplateUpdate.model_validate(payload))
+
+    assert updated["planTier"] == "custom"
+    assert updated["commercialValidationSkipped"] is True
+    assert updated["pages"][0]["blocks"][0]["customVariant"] is True
+
+
+def test_create_customer_project_from_custom_template_keeps_unknown_blocks() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"][0]["type"] = "dashboard"
+    payload["pages"][0]["blocks"][0]["variant"] = "owner-kpis"
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    assert project["planTier"] == "custom"
+    assert project["commercialValidationSkipped"] is True
+    assert project["pages"][0]["blocks"][0]["type"] == "dashboard"
+    assert project["pages"][0]["blocks"][0]["variant"] == "owner-kpis"
+    assert project["pages"][0]["blocks"][0]["customVariant"] is True
+
+
+def test_update_customer_project_allows_custom_plan_with_unknown_variant() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    updated = customer_service.update(
+        project["id"],
+        CustomerWebsiteUpdate.model_validate(
+            {
+                "title": "Nails Studio",
+                "slug": project["slug"],
+                "publicSlug": "nails-studio",
+                "planTier": "custom",
+                "templateCategory": "beauty",
+                "styles": project["styles"],
+                "layout": {"sectionOrder": ["blk_dashboard"]},
+                "pages": [
+                    {
+                        **project["pages"][0],
+                        "blocks": [
+                            {
+                                "id": "blk_dashboard",
+                                "type": "dashboard",
+                                "variant": "nails-admin-v1",
+                                "enabled": True,
+                                "order": 1,
+                                "props": {"title": "Admin"},
+                                "settings": {},
+                            }
+                        ],
+                    },
+                    project["pages"][1],
+                ],
+                "seo": project["seo"],
+                "metadata": project["metadata"],
+                "websiteData": project["websiteData"],
+                "customerData": project["customerData"],
+                "leadForms": project["leadForms"],
+                "formSubmissions": project["formSubmissions"],
+                "customDomain": project["customDomain"],
+            }
+        ),
+    )
+
+    assert updated["planTier"] == "custom"
+    assert updated["commercialValidationSkipped"] is True
+    assert updated["pages"][0]["blocks"][0]["type"] == "dashboard"
+    assert updated["pages"][0]["blocks"][0]["customVariant"] is True

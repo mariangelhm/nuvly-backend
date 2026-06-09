@@ -146,6 +146,8 @@ def _build_full_website_payload() -> Dict[str, Any]:
         "title": "Studio Contract Template",
         "slug": "studio-contract-template",
         "experienceType": "web",
+        "planTier": "custom",
+        "templateCategory": "corporate",
         "styles": {
             "themeId": "solarized-studio",
             "colors": {
@@ -233,6 +235,13 @@ def _response_json(document: Dict[str, Any]) -> Dict[str, Any]:
     return WebsiteTemplateResponse.model_validate(document).model_dump(mode="json")
 
 
+def _expect_custom_flags(blocks: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    expected = deepcopy(blocks)
+    for block in expected:
+        block["customVariant"] = True
+    return expected
+
+
 def _assert_contract_subset(document: Dict[str, Any]) -> None:
     assert document["experienceType"] == "web"
     assert document["templateStatus"] == "draft"
@@ -317,9 +326,9 @@ def test_website_template_legacy_blocks_are_exposed_as_pages() -> None:
     snapshot = service.publish(created["id"])
 
     assert response["pages"][0]["id"] == "main"
-    assert response["pages"][0]["blocks"] == legacy_blocks
+    assert response["pages"][0]["blocks"] == _expect_custom_flags(legacy_blocks)
     assert response["metadata"]["linkedPages"] == []
-    assert snapshot["snapshot"]["pages"][0]["blocks"] == legacy_blocks
+    assert snapshot["snapshot"]["pages"][0]["blocks"] == _expect_custom_flags(legacy_blocks)
 
 
 def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract() -> None:
@@ -340,6 +349,8 @@ def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract()
             {
                 "title": created["title"],
                 "slug": created["slug"],
+                "planTier": "custom",
+                "templateCategory": "corporate",
                 "styles": created["styles"],
                 "layout": created["layout"],
                 "blocks": legacy_blocks,
@@ -349,7 +360,7 @@ def test_website_template_legacy_put_with_blocks_only_preserves_pages_contract()
         ),
     )
 
-    assert updated["pages"][0]["blocks"] == legacy_blocks
+    assert updated["pages"][0]["blocks"] == _expect_custom_flags(legacy_blocks)
     assert updated["pages"][1]["id"] == "navigation_services::nav-0::overview"
 
 

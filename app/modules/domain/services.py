@@ -195,7 +195,7 @@ class CommercialRulesService:
         self.component_service = PricingComponentService(repository=repository)  # type: ignore[arg-type]
         self.category_service = TemplateCategoryService(repository=repository)  # type: ignore[arg-type]
 
-    def validate_document(self, document: Dict[str, Any]) -> None:
+    def validate_document(self, document: Dict[str, Any]) -> Dict[str, Any]:
         product_type = document.get("productType")
         plan_tier = document.get("planTier")
         template_category = document.get("templateCategory")
@@ -206,6 +206,9 @@ class CommercialRulesService:
             raise NuvlyError("planTier es obligatorio.", 422, "PLAN_TIER_REQUIRED")
         if not template_category:
             raise NuvlyError("templateCategory es obligatorio.", 422, "TEMPLATE_CATEGORY_REQUIRED")
+
+        if plan_tier == "custom":
+            return self._validate_custom_document(document, product_type)
 
         category_document = self.category_service.get_by_code(product_type, template_category)
         allowed_component_codes = set(category_document.get("allowedComponentCodes", []))
@@ -247,6 +250,29 @@ class CommercialRulesService:
                 raise NuvlyError("La variante no esta permitida por el plan.", 422, "VARIANT_NOT_ALLOWED_FOR_PLAN")
             if status == "extra" and (component_code, variant_code) not in selected_component_extras:
                 raise NuvlyError("La variante premium requiere ser seleccionada como extra.", 422, "PREMIUM_VARIANT_REQUIRES_EXTRA")
+
+        document.pop("commercialValidationSkipped", None)
+        return document
+
+    def _validate_custom_document(self, document: Dict[str, Any], product_type: str) -> Dict[str, Any]:
+        commercial_validation_skipped = False
+        for block in _collect_document_blocks(document):
+            component_code = block.get("type")
+            variant_code = block.get("variant")
+            try:
+                self.component_service.find_variant(product_type, component_code, variant_code)
+                block.pop("customVariant", None)
+            except NuvlyError as exc:
+                if exc.code not in {"PRICING_VARIANT_NOT_FOUND", "PRICING_COMPONENT_NOT_FOUND"}:
+                    raise
+                block["customVariant"] = True
+                commercial_validation_skipped = True
+
+        if commercial_validation_skipped:
+            document["commercialValidationSkipped"] = True
+        else:
+            document.pop("commercialValidationSkipped", None)
+        return document
 
 
 class TemplateService:
@@ -299,7 +325,7 @@ class TemplateService:
         document["updatedAt"] = now
         append_status_history(document, "templateStatus", None, "initial_draft")
         document = normalize_document(document, "templateStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"])
         logger.info("Template created | collection=%s id=%s", self.config.collection, document["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
@@ -358,7 +384,7 @@ class TemplateService:
             }
         )
         document = normalize_document(document, "templateStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"], current_id=template_id)
         logger.info("Template updated | collection=%s id=%s", self.config.collection, template_id)
         return self.repository.replace_document(
@@ -401,7 +427,7 @@ class TemplateService:
             append_status_history(document, "templateStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "templateStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": template_id}) + 1
         snapshot = {
@@ -539,6 +565,8 @@ class TemplateService:
             "version": version,
             "publishedAt": now,
         }
+        if document.get("commercialValidationSkipped"):
+            payload["commercialValidationSkipped"] = True
         if self.config.data_field in document:
             payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
         return payload
@@ -649,7 +677,7 @@ class CustomerProjectService:
 
         append_status_history(document, "customerStatus", None, "created_from_template")
         document = normalize_document(document, "customerStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
         document["seo"] = deepcopy(base_snapshot.get("seo", {}))
         logger.info("Customer project created | collection=%s id=%s template=%s", self.config.collection, document["id"], template["id"])
         return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
@@ -724,7 +752,7 @@ class CustomerProjectService:
             }
         )
         document = normalize_document(document, "customerStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
         logger.info("Customer project updated | collection=%s id=%s", self.config.collection, project_id)
         return self.repository.replace_document(
             self.config.collection,
@@ -769,7 +797,7 @@ class CustomerProjectService:
             append_status_history(document, "customerStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "customerStatus")
-        self.commercial_rules.validate_document(document)
+        document = self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": project_id}) + 1
         snapshot = {
@@ -844,6 +872,8 @@ class CustomerProjectService:
             "version": version,
             "publishedAt": now,
         }
+        if document.get("commercialValidationSkipped"):
+            payload["commercialValidationSkipped"] = True
         if self.config.data_field in document:
             payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
         if self.config.entity_kind == "invitation":
