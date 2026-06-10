@@ -28,6 +28,7 @@ from app.modules.domain.normalizer import normalize_document
 from app.modules.domain.repository import DomainRepository
 from app.modules.pricing.service import (
     PricingComponentService,
+    PricingPlanService,
     TemplateCategoryService,
     build_component_catalog_state,
     build_variant_catalog_state,
@@ -675,6 +676,21 @@ class CustomerProjectService:
         else:
             document.update(default_website_customer_fields())
 
+        pricing_plan_service = PricingPlanService(repository=self.repository)  # type: ignore[arg-type]
+        product_type = document.get("productType")
+        plan_tier = document.get("planTier")
+        metadata = document.get("metadata") or {}
+        snapshot_price = (base_snapshot.get("metadata") or {}).get("basePrice")
+        if snapshot_price is not None:
+            metadata["basePrice"] = snapshot_price
+        elif plan_tier != "custom":
+            try:
+                plan = pricing_plan_service.find_by_tier(product_type, plan_tier)
+                metadata["basePrice"] = plan.get("basePrice", 0)
+            except NuvlyError:
+                logger.warning("Pricing plan not found for productType=%s planTier=%s", product_type, plan_tier)
+        document["metadata"] = metadata
+
         append_status_history(document, "customerStatus", None, "created_from_template")
         document = normalize_document(document, "customerStatus")
         document = self.commercial_rules.validate_document(document)
@@ -725,7 +741,13 @@ class CustomerProjectService:
         now = utc_now_iso()
         document = payload.model_dump(mode="json", exclude_none=True)
         document = self._merge_missing_customer_fields(current, document)
-        public_slug = self._normalize_public_slug(document.get("publicSlug"), document.get("title"))
+        # Only generate publicSlug if explicitly provided in the update payload
+        payload_dict = payload.model_dump(mode="json", exclude_none=False)
+        if "publicSlug" in payload_dict and payload_dict["publicSlug"] is not None:
+            public_slug = self._normalize_public_slug(payload_dict["publicSlug"], document.get("title"))
+        else:
+            # Keep existing publicSlug if not provided in update
+            public_slug = current.get("publicSlug")
         if not document.get("slug"):
             document["slug"] = current["slug"]
         if public_slug:

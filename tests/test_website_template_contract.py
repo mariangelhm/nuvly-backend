@@ -274,6 +274,38 @@ def test_website_template_contract_preserves_complete_shape() -> None:
     assert "websiteData" not in response
 
 
+def test_website_template_custom_plan_preserves_manual_base_price_and_does_not_default() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    payload = _build_full_website_payload()
+    payload["metadata"]["basePrice"] = 123456
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["planTier"] == "custom"
+    assert created["metadata"]["basePrice"] == 123456
+
+    snapshot = service.publish(created["id"])
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 123456
+
+
+def test_website_template_custom_plan_without_base_price_remains_zero_on_publish() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    payload = _build_full_website_payload()
+    payload["metadata"].pop("basePrice", None)
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["planTier"] == "custom"
+    assert created["metadata"]["basePrice"] == 0
+
+    snapshot = service.publish(created["id"])
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 0
+
+
 def test_website_template_get_put_round_trip_is_lossless_for_editor_contract() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)

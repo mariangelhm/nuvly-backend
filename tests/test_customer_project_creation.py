@@ -386,6 +386,52 @@ def test_create_customer_project_from_custom_template_keeps_unknown_blocks() -> 
     assert project["pages"][0]["blocks"][0]["customVariant"] is True
 
 
+def test_create_customer_project_from_custom_template_preserves_manual_base_price() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["metadata"]["basePrice"] = 99000
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    assert project["planTier"] == "custom"
+    assert project["metadata"]["basePrice"] == 99000
+
+
+def test_create_customer_project_from_custom_template_preserves_zero_base_price() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["metadata"]["basePrice"] = 0
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    assert project["planTier"] == "custom"
+    assert project["metadata"]["basePrice"] == 0
+
+
 def test_update_customer_project_allows_custom_plan_with_unknown_variant() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
