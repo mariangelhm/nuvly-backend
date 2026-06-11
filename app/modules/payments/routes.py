@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
 from app.modules.payments.schemas import CreateCheckoutRequest, CreateCheckoutResponse, PaymentWebhookPayload
 from app.modules.payments.service import PaymentService
@@ -10,8 +10,8 @@ service = PaymentService()
 
 
 @router.post("/create-checkout", response_model=CreateCheckoutResponse, status_code=status.HTTP_200_OK)
-def create_checkout(payload: CreateCheckoutRequest):
-    return service.create_checkout(payload)
+def create_checkout(payload: CreateCheckoutRequest, request: Request):
+    return service.create_checkout(payload, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.post("/webhooks/mercadopago")

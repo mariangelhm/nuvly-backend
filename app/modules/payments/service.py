@@ -51,17 +51,23 @@ class PaymentService:
     def _payments_collection_name(self) -> str:
         return "payments"
 
-    def _build_checkout_url(self, provider: str, payment_id: str) -> str:
+    def _resolve_public_base_url(self, override_base_url: str | None = None) -> str:
         settings = get_settings()
-        base_url = (settings.public_base_url or "http://localhost:8000").rstrip("/")
-        return f"{base_url}/checkout/{provider}/{quote(payment_id)}"
+        if settings.public_base_url:
+            return settings.public_base_url.rstrip("/")
+        if override_base_url:
+            return override_base_url.rstrip("/")
+        return "http://localhost:8000"
 
-    def _build_public_website_url(self, public_slug: str) -> str:
-        settings = get_settings()
-        base_url = (settings.public_base_url or "http://localhost:8000").rstrip("/")
-        return f"{base_url}/w/{quote(public_slug)}"
+    def _build_checkout_url(self, provider: str, payment_id: str, base_url: str | None = None) -> str:
+        effective_base_url = self._resolve_public_base_url(base_url)
+        return f"{effective_base_url}/checkout/{provider}/{quote(payment_id)}"
 
-    def create_checkout(self, payload) -> Dict[str, Any]:
+    def _build_public_website_url(self, public_slug: str, base_url: str | None = None) -> str:
+        effective_base_url = self._resolve_public_base_url(base_url)
+        return f"{effective_base_url}/w/{quote(public_slug)}"
+
+    def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
         project_service._validate_ready_for_pending_payment(project)
@@ -78,7 +84,7 @@ class PaymentService:
 
         now = utc_now_iso()
         payment_id = new_id("pay")
-        checkout_url = self._build_checkout_url(payload.provider, payment_id)
+        checkout_url = self._build_checkout_url(payload.provider, payment_id, base_url)
         payment_document = {
             "id": payment_id,
             "paymentId": payment_id,
@@ -89,6 +95,7 @@ class PaymentService:
             "amount": amount,
             "currency": "CLP",
             "checkoutUrl": checkout_url,
+            "checkoutBaseUrl": self._resolve_public_base_url(base_url),
             "withCustomDomain": payload.withCustomDomain,
             "customDomain": custom_domain,
             "customDomainSurcharge": custom_domain_surcharge,
@@ -220,7 +227,10 @@ class PaymentService:
                 reason="payment_approved_auto_publish",
             )
             updated_project = project_service.get(project["id"])
-            public_website_url = self._build_public_website_url(updated_project["publicSlug"])
+            public_website_url = self._build_public_website_url(
+                updated_project["publicSlug"],
+                payment.get("checkoutBaseUrl"),
+            )
             updated_payment["websiteUrl"] = public_website_url
             updated_payment["publishedSnapshotId"] = published_snapshot["id"]
             self.repository.replace_document(

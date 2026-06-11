@@ -155,6 +155,20 @@ def test_create_checkout_sets_project_to_pending_payment_and_creates_payment() -
     assert stored_project["statusHistory"][-1]["status"] == "pending_payment"
 
 
+def test_create_checkout_uses_request_host_url_when_public_base_url_missing() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+
+    payment = service.create_checkout(
+        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        base_url="https://www.nuvlystudio.com",
+    )
+
+    assert payment["checkoutUrl"].startswith("https://www.nuvlystudio.com/checkout/mercadopago/")
+    assert payment["checkoutBaseUrl"] == "https://www.nuvlystudio.com"
+
+
 def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_choice() -> None:
     repository = InMemoryDomainRepository()
     project = _create_customer_project(repository)
@@ -178,6 +192,26 @@ def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_c
     assert "dominio propio" in payment["domainOptionExplanation"].lower()
     assert stored_project is not None
     assert stored_project["customDomain"] == "www.buildframe.cl"
+
+
+def test_approved_webhook_uses_checkout_base_url_for_public_website_url() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+
+    payment = service.create_checkout(
+        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="transbank"),
+        base_url="https://www.nuvlystudio.com",
+    )
+
+    updated_payment = service.process_webhook(
+        "transbank",
+        PaymentWebhookPayload(paymentId=payment["id"], status="approved", providerPaymentId="tbk_123"),
+    )
+
+    assert updated_payment["status"] == "paid"
+    assert updated_payment["websiteUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
+    assert updated_payment["publishedSnapshotId"] is not None
 
 
 def test_approved_webhook_marks_payment_paid_and_project_paid() -> None:
