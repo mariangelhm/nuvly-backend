@@ -179,7 +179,17 @@ class PaymentService:
         updated_payment["updatedAt"] = now
         updated_project["payment"] = payment_info
         updated_project["updatedAt"] = now
-
+        # If payment failed and the project was previously waiting for payment, free reserved publicSlug
+        try:
+            previous_status = project.get("customerStatus")
+        except Exception:
+            previous_status = None
+        if payload.status == "failed" and previous_status == "pending_payment":
+            # Clear publicSlug to allow reuse and avoid leaving a reserved URL when payment didn't complete
+            updated_project["publicSlug"] = None
+            # Also clear any published snapshot references just in case
+            updated_project["publishedSnapshotId"] = None
+            updated_project["lastPublishedAt"] = None
         self.repository.replace_document(
             self._payments_collection_name(),
             updated_payment["id"],
