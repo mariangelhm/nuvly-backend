@@ -174,6 +174,42 @@ def _collect_document_blocks(document: Dict[str, Any]) -> List[Dict[str, Any]]:
     return document.get("blocks") or []
 
 
+def _resolve_block_component_code(block: Dict[str, Any]) -> str:
+    component_code = (block.get("componentCode") or "").strip()
+    if component_code:
+        return component_code
+    return (block.get("type") or "").strip()
+
+
+def _resolve_block_variant_code(block: Dict[str, Any]) -> str:
+    variant_code = (block.get("variantCode") or "").strip()
+    if variant_code:
+        return variant_code
+    return (block.get("variant") or "").strip()
+
+
+def _raise_invalid_commercial_selection(
+    exc: NuvlyError,
+    *,
+    product_type: str,
+    component_code: str,
+    variant_code: str,
+) -> None:
+    if exc.code == "PRICING_COMPONENT_NOT_FOUND":
+        raise NuvlyError(
+            f"Componente comercial no encontrado. productType='{product_type}', componentCode='{component_code}'.",
+            400,
+            exc.code,
+        ) from exc
+    if exc.code == "PRICING_VARIANT_NOT_FOUND":
+        raise NuvlyError(
+            f"Variante comercial no encontrada. productType='{product_type}', componentCode='{component_code}', variantCode='{variant_code}'.",
+            400,
+            exc.code,
+        ) from exc
+    raise exc
+
+
 def _normalize_selected_component_extras(extras: List[Dict[str, Any]] | None) -> List[Dict[str, Any]]:
     normalized: List[Dict[str, Any]] = []
     for extra in extras or []:
@@ -219,9 +255,17 @@ class CommercialRulesService:
         }
 
         for block in _collect_document_blocks(document):
-            component_code = block.get("type")
-            variant_code = block.get("variant")
-            component_with_variant = self.component_service.find_variant(product_type, component_code, variant_code)
+            component_code = _resolve_block_component_code(block)
+            variant_code = _resolve_block_variant_code(block)
+            try:
+                component_with_variant = self.component_service.find_variant(product_type, component_code, variant_code)
+            except NuvlyError as exc:
+                _raise_invalid_commercial_selection(
+                    exc,
+                    product_type=product_type,
+                    component_code=component_code,
+                    variant_code=variant_code,
+                )
             component = component_with_variant["component"]
             variant = component_with_variant["variant"]
             component_availability = build_component_catalog_state(
@@ -258,8 +302,8 @@ class CommercialRulesService:
     def _validate_custom_document(self, document: Dict[str, Any], product_type: str) -> Dict[str, Any]:
         commercial_validation_skipped = False
         for block in _collect_document_blocks(document):
-            component_code = block.get("type")
-            variant_code = block.get("variant")
+            component_code = _resolve_block_component_code(block)
+            variant_code = _resolve_block_variant_code(block)
             try:
                 self.component_service.find_variant(product_type, component_code, variant_code)
                 block.pop("customVariant", None)

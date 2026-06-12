@@ -594,6 +594,12 @@ class PricingComponentService:
         for variant in component.get("variants", []):
             if variant.get("variantCode") == variant_code:
                 return {"component": component, "variant": variant}
+        if isinstance(variant_code, str) and "-" in variant_code:
+            fallback_code = variant_code.split("-", 1)[0].strip()
+            if fallback_code:
+                for variant in component.get("variants", []):
+                    if variant.get("variantCode") == fallback_code:
+                        return {"component": component, "variant": variant}
         raise NuvlyError("Variante comercial no encontrada.", 404, "PRICING_VARIANT_NOT_FOUND")
 
     def create(self, payload) -> Dict[str, Any]:

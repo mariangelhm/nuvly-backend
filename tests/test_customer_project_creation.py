@@ -278,6 +278,90 @@ def test_template_create_rejects_variant_blocked_by_plan() -> None:
         raise AssertionError("Expected VARIANT_NOT_ALLOWED_FOR_PLAN")
 
 
+def test_template_create_accepts_editor_variant_labels_and_component_code_aliases() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "pro"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"] = [
+        {
+            "id": "blk_navigation",
+            "type": "navigation",
+            "componentCode": "navigation",
+            "variant": "M7-Organic-Premium-Frame",
+            "variantCode": "M7-Organic-Premium-Frame",
+            "enabled": True,
+            "order": 1,
+            "props": {},
+            "settings": {},
+        },
+        {
+            "id": "blk_whatsapp",
+            "type": "whatsappFloating",
+            "componentCode": "whatsapp_floating",
+            "variant": "WA2-Floating-With-Label",
+            "variantCode": "WA2-Floating-With-Label",
+            "enabled": True,
+            "order": 2,
+            "props": {},
+            "settings": {},
+        },
+    ]
+    payload["layout"]["sectionOrder"] = ["blk_navigation", "blk_whatsapp"]
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["pages"][0]["blocks"][0]["variant"] == "M7-Organic-Premium-Frame"
+    assert created["pages"][0]["blocks"][1]["type"] == "whatsappFloating"
+
+
+def test_template_create_rejects_unknown_variant_as_bad_request() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "pro"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"][0]["variant"] = "ZZ9-Unknown-Editor-Label"
+    payload["pages"][0]["blocks"][0]["variantCode"] = "ZZ9-Unknown-Editor-Label-Does-Not-Exist"
+
+    try:
+        template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "PRICING_VARIANT_NOT_FOUND"
+        assert exc.status_code == 400
+        assert "productType='website'" in exc.message
+        assert "componentCode='hero'" in exc.message
+        assert "variantCode='ZZ9-Unknown-Editor-Label-Does-Not-Exist'" in exc.message
+    else:
+        raise AssertionError("Expected PRICING_VARIANT_NOT_FOUND")
+
+
+def test_template_create_rejects_unknown_component_as_bad_request_with_context() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "pro"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"][0]["type"] = "whatsappFloating"
+    payload["pages"][0]["blocks"][0]["componentCode"] = "whatsapp_floating_missing"
+    payload["pages"][0]["blocks"][0]["variant"] = "WA2-Floating-With-Label"
+    payload["pages"][0]["blocks"][0]["variantCode"] = "WA2-Floating-With-Label"
+
+    try:
+        template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    except NuvlyError as exc:
+        assert exc.code == "PRICING_COMPONENT_NOT_FOUND"
+        assert exc.status_code == 400
+        assert "productType='website'" in exc.message
+        assert "componentCode='whatsapp_floating_missing'" in exc.message
+    else:
+        raise AssertionError("Expected PRICING_COMPONENT_NOT_FOUND")
+
+
 def test_template_create_rejects_component_blocked_by_plan_before_variant() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
