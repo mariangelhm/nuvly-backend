@@ -4,8 +4,15 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.config import get_settings
-from app.modules.domain.schemas import CustomerData, CustomerProjectCreate, WebsiteTemplateCreate
-from app.modules.domain.services import CUSTOMER_WEBSITE_CONFIG, CustomerProjectService, WEBSITE_TEMPLATE_CONFIG, TemplateService
+from app.modules.domain.schemas import CustomerData, CustomerProjectCreate, WebsiteTemplateCreate, InvitationTemplateCreate
+from app.modules.domain.services import (
+    CUSTOMER_INVITATION_CONFIG,
+    CUSTOMER_WEBSITE_CONFIG,
+    INVITATION_TEMPLATE_CONFIG,
+    CustomerProjectService,
+    WEBSITE_TEMPLATE_CONFIG,
+    TemplateService,
+)
 from app.modules.payments.schemas import CreateCheckoutRequest, PaymentWebhookPayload
 from app.modules.payments.service import PaymentService
 from app.modules.pricing.service import ensure_pricing_seed
@@ -109,6 +116,22 @@ def _website_payload() -> Dict[str, Any]:
     }
 
 
+def _invitation_payload() -> Dict[str, Any]:
+    return {
+        "title": "Genesis Invitation",
+        "slug": "genesis-invitation",
+        "productType": "invitation",
+        "planTier": "plus",
+        "templateCategory": "wedding",
+        "styles": {"themeId": "sunrise"},
+        "layout": {"sectionOrder": ["blk_hero"]},
+        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
+        "metadata": {"category": "wedding", "coverImage": "/assets/cover.jpg", "tags": ["wedding"], "basePrice": 120000},
+        "invitationData": {"eventType": "wedding", "coupleNames": ["Lara", "Mati"]},
+    }
+
+
 def _create_customer_project(repository: InMemoryDomainRepository) -> Dict[str, Any]:
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -129,6 +152,29 @@ def _create_customer_project(repository: InMemoryDomainRepository) -> Dict[str, 
         CUSTOMER_WEBSITE_CONFIG.not_found_message,
         CUSTOMER_WEBSITE_CONFIG.not_found_code,
         CUSTOMER_WEBSITE_CONFIG.duplicate_message,
+    )
+
+
+def _create_customer_invitation_project(repository: InMemoryDomainRepository) -> Dict[str, Any]:
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(INVITATION_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_INVITATION_CONFIG, repository=repository)
+    created = template_service.create(InvitationTemplateCreate.model_validate(_invitation_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+    project["publicSlug"] = "genesis-studio"
+    return repository.replace_document(
+        CUSTOMER_INVITATION_CONFIG.collection,
+        project["id"],
+        project,
+        CUSTOMER_INVITATION_CONFIG.not_found_message,
+        CUSTOMER_INVITATION_CONFIG.not_found_code,
+        CUSTOMER_INVITATION_CONFIG.duplicate_message,
     )
 
 
@@ -285,3 +331,41 @@ def test_failed_webhook_marks_payment_failed_and_project_payment_failed() -> Non
     assert stored_project["customerStatus"] == "payment_failed"
     assert stored_project["payment"]["status"] == "failed"
     assert stored_project["statusHistory"][-1]["status"] == "payment_failed"
+
+
+def test_manual_confirmation_endpoint_returns_final_website_url() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+    get_settings.cache_clear()
+    get_settings().public_base_url = None
+    payment = service.create_checkout(
+        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        base_url="https://www.nuvlystudio.com",
+    )
+
+    confirmation = service.confirm_payment_manually(payment["id"], "mercadopago")
+
+    assert confirmation["ok"] is True
+    assert confirmation["status"] == "paid"
+    assert confirmation["finalUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
+    assert confirmation["websiteUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
+
+
+def test_manual_confirmation_endpoint_returns_final_invitation_url() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_invitation_project(repository)
+    service = PaymentService(repository=repository)
+    get_settings.cache_clear()
+    get_settings().public_base_url = None
+    payment = service.create_checkout(
+        CreateCheckoutRequest(projectType="invitation", projectId=project["id"], provider="mercadopago"),
+        base_url="https://www.nuvlystudio.com",
+    )
+
+    confirmation = service.confirm_payment_manually(payment["id"], "mercadopago")
+
+    assert confirmation["ok"] is True
+    assert confirmation["status"] == "paid"
+    assert confirmation["finalUrl"] == "https://www.nuvlystudio.com/i/genesis-studio"
+    assert confirmation["invitationUrl"] == "https://www.nuvlystudio.com/i/genesis-studio"

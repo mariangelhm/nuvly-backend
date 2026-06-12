@@ -37,3 +37,18 @@ class PaymentWebhookPayload(BaseModel):
     paymentId: str = Field(min_length=1)
     status: Literal["approved", "failed"]
     providerPaymentId: Optional[str] = None
+
+
+class ManualPaymentConfirmationResponse(BaseModel):
+    ok: bool = True
+    message: str
+    paymentId: str
+    provider: PaymentProvider
+    status: PaymentStatus
+    projectType: Optional[ProjectType] = None
+    projectId: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    finalUrl: Optional[str] = None
+    websiteUrl: Optional[str] = None
+    invitationUrl: Optional[str] = None

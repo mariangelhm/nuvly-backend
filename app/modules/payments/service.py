@@ -67,6 +67,10 @@ class PaymentService:
         effective_base_url = self._resolve_public_base_url(base_url)
         return f"{effective_base_url}/w/{quote(public_slug)}"
 
+    def _build_public_invitation_url(self, public_slug: str, base_url: str | None = None) -> str:
+        effective_base_url = self._resolve_public_base_url(base_url)
+        return f"{effective_base_url}/i/{quote(public_slug)}"
+
     def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
@@ -151,6 +155,72 @@ class PaymentService:
 
         return payment_document
 
+    def _build_manual_confirmation_response(
+        self,
+        payment_id: str,
+        provider: str,
+        payment: Dict[str, Any] | None,
+        message: str,
+    ) -> Dict[str, Any]:
+        if payment is None:
+            return {
+                "ok": False,
+                "message": message,
+                "paymentId": payment_id,
+                "provider": provider,
+                "status": "failed",
+            }
+
+        final_url = payment.get("websiteUrl") or payment.get("invitationUrl")
+        return {
+            "ok": True,
+            "message": message,
+            "paymentId": payment["id"],
+            "provider": payment["provider"],
+            "status": payment["status"],
+            "projectType": payment.get("projectType"),
+            "projectId": payment.get("projectId"),
+            "amount": payment.get("amount"),
+            "currency": payment.get("currency"),
+            "finalUrl": final_url,
+            "websiteUrl": payment.get("websiteUrl"),
+            "invitationUrl": payment.get("invitationUrl"),
+        }
+
+    def confirm_payment_manually(self, payment_id: str, provider: str) -> Dict[str, Any]:
+        payment = self.repository.find_document(
+            self._payments_collection_name(),
+            {"id": payment_id, "provider": provider},
+        )
+        if not payment:
+            return self._build_manual_confirmation_response(
+                payment_id,
+                provider,
+                None,
+                "Pago no encontrado para confirmacion manual.",
+            )
+
+        if payment.get("status") != "paid":
+            payment = self.process_webhook(
+                provider,
+                type(
+                    "ManualWebhookPayload",
+                    (),
+                    {
+                        "paymentId": payment_id,
+                        "status": "approved",
+                        "providerPaymentId": f"manual_{payment_id}",
+                    },
+                )(),
+            )
+
+        return self._build_manual_confirmation_response(
+            payment_id,
+            provider,
+            payment,
+            "Pago confirmado manualmente.",
+        )
+
     def process_webhook(self, provider: str, payload) -> Dict[str, Any]:
         payment = self.repository.find_document(self._payments_collection_name(), {"id": payload.paymentId, "provider": provider})
         if not payment:
@@ -168,6 +238,7 @@ class PaymentService:
         payment_info["amount"] = updated_payment.get("amount")
         payment_info["currency"] = updated_payment.get("currency")
         public_website_url: str | None = None
+        public_invitation_url: str | None = None
 
         if payload.status == "approved":
             updated_payment["status"] = "paid"
@@ -215,33 +286,48 @@ class PaymentService:
             project_service.config.duplicate_message,
         )
 
-        if (
-            payload.status == "approved"
-            and payment["projectType"] == "website"
-            and not payment.get("withCustomDomain")
-            and updated_project.get("publicSlug")
-        ):
-            published_snapshot = project_service.publish(
-                project["id"],
-                changed_by=provider,
-                reason="payment_approved_auto_publish",
-            )
-            updated_project = project_service.get(project["id"])
-            public_website_url = self._build_public_website_url(
-                updated_project["publicSlug"],
-                payment.get("checkoutBaseUrl"),
-            )
-            updated_payment["websiteUrl"] = public_website_url
-            updated_payment["publishedSnapshotId"] = published_snapshot["id"]
-            self.repository.replace_document(
-                self._payments_collection_name(),
-                updated_payment["id"],
-                updated_payment,
-                "Pago no encontrado.",
-                "PAYMENT_NOT_FOUND",
-                "Ya existe un pago duplicado.",
-                duplicate_code="DUPLICATED_PAYMENT_ID",
-            )
+        if payload.status == "approved" and updated_project.get("publicSlug"):
+            should_publish = False
+            final_url: str | None = None
+            url_field: str | None = None
+
+            if payment["projectType"] == "website" and not payment.get("withCustomDomain"):
+                should_publish = True
+                final_url = self._build_public_website_url(
+                    updated_project["publicSlug"],
+                    payment.get("checkoutBaseUrl"),
+                )
+                url_field = "websiteUrl"
+            elif payment["projectType"] == "invitation":
+                should_publish = True
+                final_url = self._build_public_invitation_url(
+                    updated_project["publicSlug"],
+                    payment.get("checkoutBaseUrl"),
+                )
+                url_field = "invitationUrl"
+
+            if should_publish and final_url and url_field:
+                published_snapshot = project_service.publish(
+                    project["id"],
+                    changed_by=provider,
+                    reason="payment_approved_auto_publish",
+                )
+                updated_project = project_service.get(project["id"])
+                if url_field == "websiteUrl":
+                    public_website_url = final_url
+                else:
+                    public_invitation_url = final_url
+                updated_payment[url_field] = final_url
+                updated_payment["publishedSnapshotId"] = published_snapshot["id"]
+                self.repository.replace_document(
+                    self._payments_collection_name(),
+                    updated_payment["id"],
+                    updated_payment,
+                    "Pago no encontrado.",
+                    "PAYMENT_NOT_FOUND",
+                    "Ya existe un pago duplicado.",
+                    duplicate_code="DUPLICATED_PAYMENT_ID",
+                )
 
         logger.info(
             "Payment webhook processed | provider=%s paymentId=%s projectType=%s projectId=%s status=%s",
@@ -253,4 +339,6 @@ class PaymentService:
         )
         if public_website_url:
             updated_payment["websiteUrl"] = public_website_url
+        if public_invitation_url:
+            updated_payment["invitationUrl"] = public_invitation_url
         return updated_payment
