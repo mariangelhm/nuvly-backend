@@ -244,6 +244,9 @@ def test_approved_webhook_uses_checkout_base_url_for_public_website_url() -> Non
     repository = InMemoryDomainRepository()
     project = _create_customer_project(repository)
     service = PaymentService(repository=repository)
+    get_settings.cache_clear()
+    get_settings().public_base_url = None
+    get_settings().frontend_public_base_url = None
 
     payment = service.create_checkout(
         CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="transbank"),
@@ -256,7 +259,7 @@ def test_approved_webhook_uses_checkout_base_url_for_public_website_url() -> Non
     )
 
     assert updated_payment["status"] == "paid"
-    assert updated_payment["websiteUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
+    assert updated_payment["websiteUrl"] == f"https://www.nuvlystudio.com/{project['id']}/buildframe-lara"
     assert updated_payment["publishedSnapshotId"] is not None
 
 
@@ -276,7 +279,7 @@ def test_approved_webhook_marks_payment_paid_and_project_paid() -> None:
 
     stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
     assert updated_payment["status"] == "paid"
-    assert updated_payment["websiteUrl"].endswith("/w/buildframe-lara")
+    assert updated_payment["websiteUrl"].endswith(f"/{project['id']}/buildframe-lara")
     assert stored_project is not None
     assert stored_project["customerStatus"] == "published"
     assert stored_project["payment"]["status"] == "paid"
@@ -339,6 +342,7 @@ def test_manual_confirmation_endpoint_returns_final_website_url() -> None:
     service = PaymentService(repository=repository)
     get_settings.cache_clear()
     get_settings().public_base_url = None
+    get_settings().frontend_public_base_url = None
     payment = service.create_checkout(
         CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
         base_url="https://www.nuvlystudio.com",
@@ -348,8 +352,8 @@ def test_manual_confirmation_endpoint_returns_final_website_url() -> None:
 
     assert confirmation["ok"] is True
     assert confirmation["status"] == "paid"
-    assert confirmation["finalUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
-    assert confirmation["websiteUrl"] == "https://www.nuvlystudio.com/w/buildframe-lara"
+    assert confirmation["finalUrl"] == f"https://www.nuvlystudio.com/{project['id']}/buildframe-lara"
+    assert confirmation["websiteUrl"] == f"https://www.nuvlystudio.com/{project['id']}/buildframe-lara"
 
 
 def test_manual_confirmation_endpoint_returns_final_invitation_url() -> None:
@@ -358,6 +362,7 @@ def test_manual_confirmation_endpoint_returns_final_invitation_url() -> None:
     service = PaymentService(repository=repository)
     get_settings.cache_clear()
     get_settings().public_base_url = None
+    get_settings().frontend_public_base_url = None
     payment = service.create_checkout(
         CreateCheckoutRequest(projectType="invitation", projectId=project["id"], provider="mercadopago"),
         base_url="https://www.nuvlystudio.com",
@@ -367,5 +372,24 @@ def test_manual_confirmation_endpoint_returns_final_invitation_url() -> None:
 
     assert confirmation["ok"] is True
     assert confirmation["status"] == "paid"
-    assert confirmation["finalUrl"] == "https://www.nuvlystudio.com/i/genesis-studio"
-    assert confirmation["invitationUrl"] == "https://www.nuvlystudio.com/i/genesis-studio"
+    assert confirmation["finalUrl"] == f"https://www.nuvlystudio.com/{project['id']}/genesis-studio"
+    assert confirmation["invitationUrl"] == f"https://www.nuvlystudio.com/{project['id']}/genesis-studio"
+
+
+def test_checkout_and_final_urls_prefer_frontend_public_base_url() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    service = PaymentService(repository=repository)
+    get_settings.cache_clear()
+    get_settings().public_base_url = "https://nuvly-backend-nnrb.onrender.com"
+    get_settings().frontend_public_base_url = "https://www.nuvlystudio.com"
+
+    payment = service.create_checkout(
+        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        base_url="https://internal-backend.example",
+    )
+    confirmation = service.confirm_payment_manually(payment["id"], "mercadopago")
+
+    assert payment["checkoutUrl"].startswith("https://www.nuvlystudio.com/checkout/mercadopago/")
+    assert payment["checkoutBaseUrl"] == "https://www.nuvlystudio.com"
+    assert confirmation["finalUrl"] == f"https://www.nuvlystudio.com/{project['id']}/buildframe-lara"

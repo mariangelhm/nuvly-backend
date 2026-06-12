@@ -17,6 +17,7 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
     public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
+    frontend_public_base_url: str | None = Field(default=None, alias="FRONTEND_PUBLIC_BASE_URL")
     media_max_size_mb: int = Field(default=5, alias="MEDIA_MAX_SIZE_MB")
 
     model_config = SettingsConfigDict(
@@ -47,6 +48,6 @@ def get_settings() -> Settings:
                 missing_or_invalid.append(field_name)
         details = ", ".join(missing_or_invalid) if missing_or_invalid else str(exc)
         raise RuntimeError(
-            "Invalid environment configuration. Check MONGODB_URI, MONGODB_DB_NAME, API_PREFIX, CORS_ORIGINS, PUBLIC_BASE_URL and MEDIA_MAX_SIZE_MB. "
+            "Invalid environment configuration. Check MONGODB_URI, MONGODB_DB_NAME, API_PREFIX, CORS_ORIGINS, PUBLIC_BASE_URL, FRONTEND_PUBLIC_BASE_URL and MEDIA_MAX_SIZE_MB. "
             f"Details: {details}"
         ) from exc

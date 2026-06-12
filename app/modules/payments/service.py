@@ -51,7 +51,7 @@ class PaymentService:
     def _payments_collection_name(self) -> str:
         return "payments"
 
-    def _resolve_public_base_url(self, override_base_url: str | None = None) -> str:
+    def _resolve_backend_base_url(self, override_base_url: str | None = None) -> str:
         settings = get_settings()
         if settings.public_base_url:
             return settings.public_base_url.rstrip("/")
@@ -59,17 +59,23 @@ class PaymentService:
             return override_base_url.rstrip("/")
         return "http://localhost:8000"
 
+    def _resolve_frontend_base_url(self, override_base_url: str | None = None) -> str:
+        settings = get_settings()
+        if settings.frontend_public_base_url:
+            return settings.frontend_public_base_url.rstrip("/")
+        if settings.public_base_url:
+            return settings.public_base_url.rstrip("/")
+        if override_base_url:
+            return override_base_url.rstrip("/")
+        return "http://localhost:8000"
+
     def _build_checkout_url(self, provider: str, payment_id: str, base_url: str | None = None) -> str:
-        effective_base_url = self._resolve_public_base_url(base_url)
+        effective_base_url = self._resolve_frontend_base_url(base_url)
         return f"{effective_base_url}/checkout/{provider}/{quote(payment_id)}"
 
-    def _build_public_website_url(self, public_slug: str, base_url: str | None = None) -> str:
-        effective_base_url = self._resolve_public_base_url(base_url)
-        return f"{effective_base_url}/w/{quote(public_slug)}"
-
-    def _build_public_invitation_url(self, public_slug: str, base_url: str | None = None) -> str:
-        effective_base_url = self._resolve_public_base_url(base_url)
-        return f"{effective_base_url}/i/{quote(public_slug)}"
+    def _build_public_project_url(self, project_id: str, public_slug: str, base_url: str | None = None) -> str:
+        effective_base_url = self._resolve_frontend_base_url(base_url)
+        return f"{effective_base_url}/{quote(project_id)}/{quote(public_slug)}"
 
     def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
@@ -99,7 +105,7 @@ class PaymentService:
             "amount": amount,
             "currency": "CLP",
             "checkoutUrl": checkout_url,
-            "checkoutBaseUrl": self._resolve_public_base_url(base_url),
+            "checkoutBaseUrl": self._resolve_frontend_base_url(base_url),
             "withCustomDomain": payload.withCustomDomain,
             "customDomain": custom_domain,
             "customDomainSurcharge": custom_domain_surcharge,
@@ -293,14 +299,16 @@ class PaymentService:
 
             if payment["projectType"] == "website" and not payment.get("withCustomDomain"):
                 should_publish = True
-                final_url = self._build_public_website_url(
+                final_url = self._build_public_project_url(
+                    project["id"],
                     updated_project["publicSlug"],
                     payment.get("checkoutBaseUrl"),
                 )
                 url_field = "websiteUrl"
             elif payment["projectType"] == "invitation":
                 should_publish = True
-                final_url = self._build_public_invitation_url(
+                final_url = self._build_public_project_url(
+                    project["id"],
                     updated_project["publicSlug"],
                     payment.get("checkoutBaseUrl"),
                 )
