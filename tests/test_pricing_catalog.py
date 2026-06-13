@@ -357,7 +357,7 @@ def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
     assert premium_variant["locked"] is True
 
 
-def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> None:
+def test_catalog_components_marks_blocked_variants_by_plan() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
     service = CatalogService(repository=repository)
@@ -390,12 +390,10 @@ def test_catalog_components_marks_blocked_variants_by_plan_and_category() -> Non
     assert branches["locked"] is True
     assert branches["lockReason"] == "Este componente no está disponible para el plan seleccionado."
     assert branches_variant["status"] == "blocked"
-    assert projects["allowedByCategory"] is False
-    assert projects["status"] == "blocked"
-    assert project_variant["status"] == "blocked"
-    assert project_variant["label"] == "No disponible para esta categoría"
-    assert project_variant["lockLabel"] == "No disponible para esta categoría"
-    assert project_variant["locked"] is True
+    assert projects["allowedByCategory"] is True
+    assert projects["status"] == "included"
+    assert project_variant["status"] == "included"
+    assert project_variant["locked"] is False
 
 
 def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -> None:

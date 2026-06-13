@@ -245,6 +245,23 @@ MONGODB_URI=mongodb+srv://TU_USUARIO:TU_PASSWORD@TU_CLUSTER.mongodb.net/?retryWr
 MONGODB_DB_NAME=nuvly_dev
 
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+PUBLIC_BASE_URL=http://localhost:8000
+FRONTEND_PUBLIC_BASE_URL=http://localhost:5173
+```
+
+`PUBLIC_BASE_URL` debe apuntar siempre al origen publico del backend.
+Se usa para construir URLs absolutas de assets como `/static/uploads/...` en respuestas del API.
+
+Ejemplos:
+
+```env
+# local
+PUBLIC_BASE_URL=http://localhost:8000
+FRONTEND_PUBLIC_BASE_URL=http://localhost:5173
+
+# uat
+PUBLIC_BASE_URL=https://api-uat.nuvlystudio.com
+FRONTEND_PUBLIC_BASE_URL=https://uat.nuvlystudio.com
 ```
 
 No subas `.env` a GitHub.
@@ -520,6 +537,9 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
 Si tu frontend corre en otro puerto, agrégalo.
+
+Si despliegas en UAT o producción, incluye también el dominio público del frontend y define `PUBLIC_BASE_URL` con el dominio público del backend.
+Eso evita que las imágenes subidas dependan del host desde donde se esté abriendo el editor.
 
 ---
 

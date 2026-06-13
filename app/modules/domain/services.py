@@ -15,6 +15,7 @@ from app.core.catalog import (
     normalize_product_type,
     normalize_template_category,
 )
+from app.core.config import get_settings
 from app.core.utils import new_id, slugify, utc_now_iso
 from app.core.errors import NuvlyError
 from app.modules.domain.defaults import (
@@ -26,6 +27,7 @@ from app.modules.domain.defaults import (
 )
 from app.modules.domain.normalizer import normalize_document
 from app.modules.domain.repository import DomainRepository
+from app.modules.domain.schemas import PublishRequest
 from app.modules.pricing.service import (
     PricingComponentService,
     PricingPlanService,
@@ -163,6 +165,8 @@ COMMON_EXPERIENCE_FIELDS = {
     "selectedComponentExtras",
 }
 
+STATIC_UPLOAD_PREFIX = "/static/uploads/"
+
 
 def _collect_document_blocks(document: Dict[str, Any]) -> List[Dict[str, Any]]:
     pages = document.get("pages") or []
@@ -172,6 +176,40 @@ def _collect_document_blocks(document: Dict[str, Any]) -> List[Dict[str, Any]]:
             collected.extend(page.get("blocks") or [])
         return collected
     return document.get("blocks") or []
+
+
+def _resolve_public_asset_base_url(base_url: str | None = None) -> str | None:
+    settings = get_settings()
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
+    if base_url:
+        return base_url.rstrip("/")
+    return None
+
+
+def _absolutize_uploaded_media_urls(value: Any, resolved_base_url: str | None) -> Any:
+    if resolved_base_url is None:
+        return value
+    if isinstance(value, dict):
+        return {key: _absolutize_uploaded_media_urls(item, resolved_base_url) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_absolutize_uploaded_media_urls(item, resolved_base_url) for item in value]
+    if isinstance(value, str) and value.startswith(STATIC_UPLOAD_PREFIX):
+        return f"{resolved_base_url}{value}"
+    return value
+
+
+def _prepare_snapshot_response(snapshot: Dict[str, Any], status_field: str, base_url: str | None = None) -> Dict[str, Any]:
+    prepared = deepcopy(snapshot)
+    prepared["snapshot"] = _absolutize_uploaded_media_urls(
+        normalize_document(prepared["snapshot"], status_field),
+        _resolve_public_asset_base_url(base_url),
+    )
+    return prepared
+
+
+def _decorate_public_media(document: Dict[str, Any], base_url: str | None = None) -> Dict[str, Any]:
+    return _absolutize_uploaded_media_urls(deepcopy(document), _resolve_public_asset_base_url(base_url))
 
 
 def _resolve_block_component_code(block: Dict[str, Any]) -> str:
@@ -248,7 +286,6 @@ class CommercialRulesService:
             return self._validate_custom_document(document, product_type)
 
         category_document = self.category_service.get_by_code(product_type, template_category)
-        allowed_component_codes = set(category_document.get("allowedComponentCodes", []))
         selected_component_extras = {
             (item["componentCode"], item["variantCode"])
             for item in _normalize_selected_component_extras(document.get("selectedComponentExtras"))
@@ -271,16 +308,18 @@ class CommercialRulesService:
             component_availability = build_component_catalog_state(
                 component_tier=component["componentTier"],
                 plan_tier=plan_tier,
-                component_allowed=component_code in allowed_component_codes,
+                component_allowed=True,
                 component_active=component.get("active", True),
             )
             component_status = component_availability["rawStatus"]
             if component_status == "inactive":
                 raise NuvlyError("El componente seleccionado está inactivo.", 422, "COMPONENT_INACTIVE")
-            if component_status == "blocked_by_category":
-                raise NuvlyError("El componente no esta permitido para la categoria.", 422, "COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
             if component_status == "blocked_by_plan":
-                raise NuvlyError("El componente no esta permitido para el plan.", 422, "COMPONENT_NOT_ALLOWED_FOR_PLAN")
+                raise NuvlyError(
+                    f"El componente no esta permitido para el plan. productType='{product_type}', planTier='{plan_tier}', componentCode='{component_code}'.",
+                    422,
+                    "COMPONENT_NOT_ALLOWED_FOR_PLAN",
+                )
 
             availability = build_variant_catalog_state(
                 variant=variant,
@@ -292,9 +331,17 @@ class CommercialRulesService:
             if status == "inactive":
                 raise NuvlyError("La variante seleccionada esta inactiva.", 422, "VARIANT_INACTIVE")
             if status == "blocked_by_plan":
-                raise NuvlyError("La variante no esta permitida por el plan.", 422, "VARIANT_NOT_ALLOWED_FOR_PLAN")
+                raise NuvlyError(
+                    f"La variante no esta permitida por el plan. productType='{product_type}', planTier='{plan_tier}', componentCode='{component_code}', variantCode='{variant_code}'.",
+                    422,
+                    "VARIANT_NOT_ALLOWED_FOR_PLAN",
+                )
             if status == "extra" and (component_code, variant_code) not in selected_component_extras:
-                raise NuvlyError("La variante premium requiere ser seleccionada como extra.", 422, "PREMIUM_VARIANT_REQUIRES_EXTRA")
+                raise NuvlyError(
+                    f"La variante premium requiere ser seleccionada como extra. productType='{product_type}', planTier='{plan_tier}', componentCode='{component_code}', variantCode='{variant_code}'.",
+                    422,
+                    "PREMIUM_VARIANT_REQUIRES_EXTRA",
+                )
 
         document.pop("commercialValidationSkipped", None)
         return document
@@ -340,7 +387,48 @@ class TemplateService:
         if existing and existing.get("id") != current_id:
             raise NuvlyError(self.config.duplicate_message, 409, "DUPLICATED_SLUG")
 
-    def create(self, payload) -> Dict[str, Any]:
+    def _get_template_document(self, template_id: str) -> Dict[str, Any]:
+        document = self.repository.find_document(self.config.collection, {"id": template_id})
+        if not document:
+            raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
+        return document
+
+    def _resolve_plan_base_price(self, product_type: ProductType, plan_tier: PlanTier) -> float:
+        pricing_plan_service = PricingPlanService(repository=self.repository)  # type: ignore[arg-type]
+        try:
+            plan = pricing_plan_service.find_by_tier(product_type, plan_tier)
+            return float(plan.get("basePrice", 0) or 0)
+        except NuvlyError:
+            logger.warning(
+                "Pricing plan not found while resolving basePrice | productType=%s planTier=%s",
+                product_type,
+                plan_tier,
+            )
+            return 0
+
+    def _apply_template_base_price_defaults(self, document: Dict[str, Any], publish_request: PublishRequest | None = None) -> Dict[str, Any]:
+        metadata = document.get("metadata") or {}
+        base_price_source = metadata.get("basePriceSource")
+        current_base_price = metadata.get("basePrice")
+        plan_base_price = self._resolve_plan_base_price(document["productType"], document["planTier"])
+
+        if publish_request is not None:
+            if publish_request.priceMode == "manual":
+                metadata["basePrice"] = float(publish_request.basePrice or 0)
+                metadata["basePriceSource"] = "manual"
+            else:
+                metadata["basePrice"] = plan_base_price
+                metadata["basePriceSource"] = "plan_base"
+            document["metadata"] = metadata
+            return document
+
+        if current_base_price is None or (float(current_base_price) == 0 and base_price_source != "manual"):
+            metadata["basePrice"] = plan_base_price
+            metadata["basePriceSource"] = "plan_base"
+        document["metadata"] = metadata
+        return document
+
+    def create(self, payload, base_url: str | None = None) -> Dict[str, Any]:
         now = utc_now_iso()
         document_id = new_id(self.config.id_prefix)
         slug = slugify(payload.slug or payload.title)
@@ -370,14 +458,23 @@ class TemplateService:
         document["updatedAt"] = now
         append_status_history(document, "templateStatus", None, "initial_draft")
         document = normalize_document(document, "templateStatus")
+        document = self._apply_template_base_price_defaults(document)
         document = self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"])
         logger.info("Template created | collection=%s id=%s", self.config.collection, document["id"])
-        return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
+        stored = self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
+        return _decorate_public_media(stored, base_url=base_url)
 
     def _merge_missing_template_fields(self, current: Dict[str, Any], document: Dict[str, Any]) -> Dict[str, Any]:
         merged = deepcopy(document)
+        skip_fields: set[str] = set()
+        if "pages" in merged:
+            skip_fields.add("blocks")
+        if "blocks" in merged:
+            skip_fields.add("pages")
         for field in COMMON_EXPERIENCE_FIELDS | {self.config.data_field}:
+            if field in skip_fields:
+                continue
             if field not in merged and field in current:
                 merged[field] = deepcopy(current[field])
         return merged
@@ -390,6 +487,7 @@ class TemplateService:
         category: Optional[str] = None,
         level: Optional[VariantLevel] = None,
         catalog_visible: Optional[bool] = None,
+        base_url: str | None = None,
     ) -> List[Dict[str, Any]]:
         filters: Dict[str, Any] = {}
         if template_status:
@@ -400,16 +498,13 @@ class TemplateService:
             filters["metadata.level"] = level
         if catalog_visible is not None:
             filters["metadata.catalogVisible"] = catalog_visible
-        return [self._prepare_template_response(document) for document in self.repository.find_documents(self.config.collection, filters, limit=limit, skip=skip)]
+        return [self._prepare_template_response(document, base_url=base_url) for document in self.repository.find_documents(self.config.collection, filters, limit=limit, skip=skip)]
 
-    def get(self, template_id: str) -> Dict[str, Any]:
-        document = self.repository.find_document(self.config.collection, {"id": template_id})
-        if not document:
-            raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
-        return self._prepare_template_response(document)
+    def get(self, template_id: str, base_url: str | None = None) -> Dict[str, Any]:
+        return self._prepare_template_response(self._get_template_document(template_id), base_url=base_url)
 
-    def update(self, template_id: str, payload) -> Dict[str, Any]:
-        current = self.get(template_id)
+    def update(self, template_id: str, payload, base_url: str | None = None) -> Dict[str, Any]:
+        current = self._get_template_document(template_id)
         now = utc_now_iso()
         document = payload.model_dump(mode="json", exclude_none=True)
         for field in SERVER_MANAGED_TEMPLATE_FIELDS:
@@ -429,10 +524,11 @@ class TemplateService:
             }
         )
         document = normalize_document(document, "templateStatus")
+        document = self._apply_template_base_price_defaults(document)
         document = self.commercial_rules.validate_document(document)
         self._ensure_slug_available(document["slug"], current_id=template_id)
         logger.info("Template updated | collection=%s id=%s", self.config.collection, template_id)
-        return self.repository.replace_document(
+        stored = self.repository.replace_document(
             self.config.collection,
             template_id,
             document,
@@ -440,21 +536,22 @@ class TemplateService:
             self.config.not_found_code,
             self.config.duplicate_message,
         )
+        return _decorate_public_media(stored, base_url=base_url)
 
-    def update_status(self, template_id: str, template_status: str, changed_by: Optional[str], reason: Optional[str]) -> Dict[str, Any]:
+    def update_status(self, template_id: str, template_status: str, changed_by: Optional[str], reason: Optional[str], base_url: str | None = None) -> Dict[str, Any]:
         if template_status == "published":
-            self.publish(template_id, changed_by=changed_by, reason=reason)
-            return self.get(template_id)
+            self.publish(template_id, changed_by=changed_by, reason=reason, base_url=base_url)
+            return self.get(template_id, base_url=base_url)
 
-        current = self.get(template_id)
+        current = self._get_template_document(template_id)
         if current["templateStatus"] == template_status:
-            return current
+            return self._prepare_template_response(current, base_url=base_url)
         current["templateStatus"] = template_status
         current["updatedAt"] = utc_now_iso()
         append_status_history(current, "templateStatus", changed_by, reason)
         current = normalize_document(current, "templateStatus")
         logger.info("Template status changed | collection=%s id=%s status=%s", self.config.collection, template_id, template_status)
-        return self.repository.replace_document(
+        stored = self.repository.replace_document(
             self.config.collection,
             template_id,
             current,
@@ -462,9 +559,17 @@ class TemplateService:
             self.config.not_found_code,
             self.config.duplicate_message,
         )
+        return self._prepare_template_response(stored, base_url=base_url)
 
-    def publish(self, template_id: str, changed_by: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
-        current = self.get(template_id)
+    def publish(
+        self,
+        template_id: str,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        base_url: str | None = None,
+        publish_request: PublishRequest | None = None,
+    ) -> Dict[str, Any]:
+        current = self._get_template_document(template_id)
         now = utc_now_iso()
         document = deepcopy(current)
         if document["templateStatus"] != "published":
@@ -472,6 +577,7 @@ class TemplateService:
             append_status_history(document, "templateStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "templateStatus")
+        document = self._apply_template_base_price_defaults(document, publish_request=publish_request)
         document = self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": template_id}) + 1
@@ -502,7 +608,7 @@ class TemplateService:
             self.config.duplicate_message,
         )
         logger.info("Template published | collection=%s id=%s snapshot=%s version=%s", self.config.collection, template_id, snapshot["id"], version)
-        return snapshot
+        return _decorate_public_media(snapshot, base_url=base_url)
 
     def unpublish(self, template_id: str, changed_by: Optional[str] = None, reason: Optional[str] = "unpublish_template") -> Dict[str, Any]:
         current = self.get(template_id)
@@ -531,6 +637,7 @@ class TemplateService:
         level: Optional[VariantLevel] = None,
         tags: Optional[List[str]] = None,
         extra_filter_value: Optional[str] = None,
+        base_url: str | None = None,
     ) -> List[Dict[str, Any]]:
         filters: Dict[str, Any] = {"templateStatus": "published"}
         if category:
@@ -563,9 +670,9 @@ class TemplateService:
             self.config.collection,
             [document.get("id") for document in documents],
         )
-        return [self._build_public_card(document) for document in documents]
+        return [self._build_public_card(document, base_url=base_url) for document in documents]
 
-    def get_public_by_slug(self, slug: str) -> Dict[str, Any]:
+    def get_public_by_slug(self, slug: str, base_url: str | None = None) -> Dict[str, Any]:
         normalized_slug = slugify(slug)
         snapshots = self.repository.find_documents(
             self.config.snapshot_collection,
@@ -584,8 +691,7 @@ class TemplateService:
                 },
             )
             if document:
-                snapshot["snapshot"] = normalize_document(snapshot["snapshot"], "templateStatus")
-                return snapshot
+                return _prepare_snapshot_response(snapshot, "templateStatus", base_url=base_url)
         if not snapshots:
             raise NuvlyError("Template publico no encontrado.", 404, "PUBLIC_TEMPLATE_NOT_FOUND")
         raise NuvlyError("El slug solicitado no corresponde al snapshot publicado vigente.", 404, "PUBLIC_TEMPLATE_NOT_FOUND")
@@ -616,8 +722,8 @@ class TemplateService:
             payload[self.config.data_field] = deepcopy(document.get(self.config.data_field))
         return payload
 
-    def _build_public_card(self, document: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+    def _build_public_card(self, document: Dict[str, Any], base_url: str | None = None) -> Dict[str, Any]:
+        card = {
             "id": document["id"],
             "title": document.get("title", ""),
             "slug": document.get("slug", ""),
@@ -628,6 +734,7 @@ class TemplateService:
             "lastPublishedAt": document.get("lastPublishedAt"),
             "publishedSnapshotId": document.get("publishedSnapshotId"),
         }
+        return _absolutize_uploaded_media_urls(card, _resolve_public_asset_base_url(base_url))
 
     def _get_published_snapshot_from_document(self, document: Dict[str, Any], raise_on_missing: bool = True) -> Optional[Dict[str, Any]]:
         snapshot_id = document.get("publishedSnapshotId")
@@ -642,10 +749,11 @@ class TemplateService:
             raise NuvlyError("Snapshot publicado no encontrado.", 404, "PUBLISHED_TEMPLATE_SNAPSHOT_NOT_FOUND")
         return None
 
-    def _prepare_template_response(self, document: Dict[str, Any]) -> Dict[str, Any]:
+    def _prepare_template_response(self, document: Dict[str, Any], base_url: str | None = None) -> Dict[str, Any]:
         prepared = deepcopy(document)
         prepared["experienceType"] = self.config.experience_type
-        return normalize_document(prepared, "templateStatus")
+        normalized = normalize_document(prepared, "templateStatus")
+        return _absolutize_uploaded_media_urls(normalized, _resolve_public_asset_base_url(base_url))
 
 
 class CustomerProjectService:
@@ -657,6 +765,11 @@ class CustomerProjectService:
 
     def _merge_missing_customer_fields(self, current: Dict[str, Any], document: Dict[str, Any]) -> Dict[str, Any]:
         merged = deepcopy(document)
+        skip_fields: set[str] = set()
+        if "pages" in merged:
+            skip_fields.add("blocks")
+        if "blocks" in merged:
+            skip_fields.add("pages")
         customer_specific_fields = {
             self.config.data_field,
             "customerData",
@@ -671,11 +784,19 @@ class CustomerProjectService:
         else:
             customer_specific_fields.update({"leadForms", "formSubmissions", "customDomain"})
         for field in COMMON_EXPERIENCE_FIELDS | customer_specific_fields:
+            if field in skip_fields:
+                continue
             if field not in merged and field in current:
                 merged[field] = deepcopy(current[field])
         return merged
 
-    def create_from_template(self, payload) -> Dict[str, Any]:
+    def _get_project_document(self, project_id: str) -> Dict[str, Any]:
+        document = self.repository.find_document(self.config.collection, {"id": project_id})
+        if not document:
+            raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
+        return document
+
+    def create_from_template(self, payload, base_url: str | None = None) -> Dict[str, Any]:
         template = self.repository.find_document(
             self.config.template_config.collection,
             {"id": payload.templateId, "templateStatus": "published"},
@@ -720,19 +841,18 @@ class CustomerProjectService:
         else:
             document.update(default_website_customer_fields())
 
-        pricing_plan_service = PricingPlanService(repository=self.repository)  # type: ignore[arg-type]
         product_type = document.get("productType")
         plan_tier = document.get("planTier")
         metadata = document.get("metadata") or {}
         snapshot_price = (base_snapshot.get("metadata") or {}).get("basePrice")
-        if snapshot_price is not None:
+        snapshot_price_source = (base_snapshot.get("metadata") or {}).get("basePriceSource")
+        if snapshot_price is not None and not (float(snapshot_price) == 0 and snapshot_price_source != "manual"):
             metadata["basePrice"] = snapshot_price
-        elif plan_tier != "custom":
-            try:
-                plan = pricing_plan_service.find_by_tier(product_type, plan_tier)
-                metadata["basePrice"] = plan.get("basePrice", 0)
-            except NuvlyError:
-                logger.warning("Pricing plan not found for productType=%s planTier=%s", product_type, plan_tier)
+            if snapshot_price_source:
+                metadata["basePriceSource"] = snapshot_price_source
+        else:
+            metadata["basePrice"] = self.template_service._resolve_plan_base_price(product_type, plan_tier)
+            metadata["basePriceSource"] = "plan_base"
         document["metadata"] = metadata
 
         append_status_history(document, "customerStatus", None, "created_from_template")
@@ -740,7 +860,8 @@ class CustomerProjectService:
         document = self.commercial_rules.validate_document(document)
         document["seo"] = deepcopy(base_snapshot.get("seo", {}))
         logger.info("Customer project created | collection=%s id=%s template=%s", self.config.collection, document["id"], template["id"])
-        return self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
+        stored = self.repository.insert_document(self.config.collection, document, self.config.duplicate_message)
+        return _decorate_public_media(stored, base_url=base_url)
 
     def _normalize_public_slug(self, public_slug: str | None, title: str | None) -> str | None:
         if public_slug is None:
@@ -774,14 +895,11 @@ class CustomerProjectService:
 
         self._ensure_public_slug_available(public_slug, current_id=document.get("id"))
 
-    def get(self, project_id: str) -> Dict[str, Any]:
-        document = self.repository.find_document(self.config.collection, {"id": project_id})
-        if not document:
-            raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
-        return normalize_document(document, "customerStatus")
+    def get(self, project_id: str, base_url: str | None = None) -> Dict[str, Any]:
+        return self._prepare_customer_response(self._get_project_document(project_id), base_url=base_url)
 
-    def update(self, project_id: str, payload) -> Dict[str, Any]:
-        current = self.get(project_id)
+    def update(self, project_id: str, payload, base_url: str | None = None) -> Dict[str, Any]:
+        current = self._get_project_document(project_id)
         now = utc_now_iso()
         document = payload.model_dump(mode="json", exclude_none=True)
         document = self._merge_missing_customer_fields(current, document)
@@ -789,8 +907,9 @@ class CustomerProjectService:
         payload_dict = payload.model_dump(mode="json", exclude_none=False)
         if "publicSlug" in payload_dict and payload_dict["publicSlug"] is not None:
             public_slug = self._normalize_public_slug(payload_dict["publicSlug"], document.get("title"))
+        elif current.get("publicSlug") is None:
+            public_slug = self._normalize_public_slug(None, document.get("title"))
         else:
-            # Keep existing publicSlug if not provided in update
             public_slug = current.get("publicSlug")
         if not document.get("slug"):
             document["slug"] = current["slug"]
@@ -820,7 +939,7 @@ class CustomerProjectService:
         document = normalize_document(document, "customerStatus")
         document = self.commercial_rules.validate_document(document)
         logger.info("Customer project updated | collection=%s id=%s", self.config.collection, project_id)
-        return self.repository.replace_document(
+        stored = self.repository.replace_document(
             self.config.collection,
             project_id,
             document,
@@ -828,15 +947,16 @@ class CustomerProjectService:
             self.config.not_found_code,
             self.config.duplicate_message,
         )
+        return _decorate_public_media(stored, base_url=base_url)
 
-    def update_status(self, project_id: str, customer_status: str, changed_by: Optional[str], reason: Optional[str]) -> Dict[str, Any]:
+    def update_status(self, project_id: str, customer_status: str, changed_by: Optional[str], reason: Optional[str], base_url: str | None = None) -> Dict[str, Any]:
         if customer_status == "published":
-            self.publish(project_id, changed_by=changed_by, reason=reason)
-            return self.get(project_id)
+            self.publish(project_id, changed_by=changed_by, reason=reason, base_url=base_url)
+            return self.get(project_id, base_url=base_url)
 
-        current = self.get(project_id)
+        current = self._get_project_document(project_id)
         if current["customerStatus"] == customer_status:
-            return current
+            return self._prepare_customer_response(current, base_url=base_url)
         if customer_status == "pending_payment":
             self._validate_ready_for_pending_payment(current)
         current["customerStatus"] = customer_status
@@ -844,7 +964,7 @@ class CustomerProjectService:
         append_status_history(current, "customerStatus", changed_by, reason)
         current = normalize_document(current, "customerStatus")
         logger.info("Customer status changed | collection=%s id=%s status=%s", self.config.collection, project_id, customer_status)
-        return self.repository.replace_document(
+        stored = self.repository.replace_document(
             self.config.collection,
             project_id,
             current,
@@ -852,9 +972,17 @@ class CustomerProjectService:
             self.config.not_found_code,
             self.config.duplicate_message,
         )
+        return self._prepare_customer_response(stored, base_url=base_url)
 
-    def publish(self, project_id: str, changed_by: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
-        current = self.get(project_id)
+    def publish(
+        self,
+        project_id: str,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        base_url: str | None = None,
+        publish_request: PublishRequest | None = None,
+    ) -> Dict[str, Any]:
+        current = self._get_project_document(project_id)
         self._validate_ready_for_pending_payment(current)
         now = utc_now_iso()
         document = deepcopy(current)
@@ -863,6 +991,7 @@ class CustomerProjectService:
             append_status_history(document, "customerStatus", changed_by, reason)
         document["updatedAt"] = now
         document = normalize_document(document, "customerStatus")
+        document = self.template_service._apply_template_base_price_defaults(document, publish_request=publish_request)
         document = self.commercial_rules.validate_document(document)
 
         version = self.repository.count_documents(self.config.snapshot_collection, {"sourceId": project_id}) + 1
@@ -894,9 +1023,9 @@ class CustomerProjectService:
             self.config.duplicate_message,
         )
         logger.info("Customer project published | collection=%s id=%s snapshot=%s version=%s", self.config.collection, project_id, snapshot["id"], version)
-        return snapshot
+        return _decorate_public_media(snapshot, base_url=base_url)
 
-    def get_published_by_slug(self, slug: str) -> Dict[str, Any]:
+    def get_published_by_slug(self, slug: str, base_url: str | None = None) -> Dict[str, Any]:
         normalized_slug = self._normalize_public_slug(slugify(slug), None)
         if not normalized_slug:
             raise NuvlyError("Experiencia publicada no encontrada.", 404, "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
@@ -911,8 +1040,7 @@ class CustomerProjectService:
             {"id": document.get("publishedSnapshotId")},
         )
         ensured = ensure_snapshot(snapshot, "Snapshot publicado no encontrado.", "PUBLISHED_CUSTOMER_PROJECT_NOT_FOUND")
-        ensured["snapshot"] = normalize_document(ensured["snapshot"], "customerStatus")
-        return ensured
+        return _prepare_snapshot_response(ensured, "customerStatus", base_url=base_url)
 
     def _build_snapshot_payload(self, document: Dict[str, Any], version: int, now: str) -> Dict[str, Any]:
         payload = {
@@ -951,3 +1079,7 @@ class CustomerProjectService:
             payload["formSubmissions"] = deepcopy(document.get("formSubmissions", []))
             payload["customDomain"] = document.get("customDomain")
         return payload
+
+    def _prepare_customer_response(self, document: Dict[str, Any], base_url: str | None = None) -> Dict[str, Any]:
+        normalized = normalize_document(deepcopy(document), "customerStatus")
+        return _absolutize_uploaded_media_urls(normalized, _resolve_public_asset_base_url(base_url))

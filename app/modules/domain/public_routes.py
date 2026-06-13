@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.core.catalog import VariantLevel
 from app.modules.domain.schemas import PublicTemplateCardResponse, SnapshotResponse
@@ -29,6 +29,7 @@ def parse_csv(value: Optional[str]) -> list[str] | None:
 
 @router.get("/invitation-templates", response_model=list[PublicTemplateCardResponse])
 def list_public_invitation_templates(
+    request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     category: str | None = Query(default=None),
@@ -36,16 +37,17 @@ def list_public_invitation_templates(
     tags: str | None = Query(default=None),
     eventType: str | None = Query(default=None),
 ):
-    return invitation_service.list_public(limit, skip, category, level, parse_csv(tags), eventType)
+    return invitation_service.list_public(limit, skip, category, level, parse_csv(tags), eventType, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/invitation-templates/{slug}", response_model=SnapshotResponse)
-def get_public_invitation_template(slug: str):
-    return invitation_service.get_public_by_slug(slug)
+def get_public_invitation_template(slug: str, request: Request):
+    return invitation_service.get_public_by_slug(slug, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/website-templates", response_model=list[PublicTemplateCardResponse])
 def list_public_website_templates(
+    request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     category: str | None = Query(default=None),
@@ -53,19 +55,19 @@ def list_public_website_templates(
     tags: str | None = Query(default=None),
     industry: str | None = Query(default=None),
 ):
-    return website_service.list_public(limit, skip, category, level, parse_csv(tags), industry)
+    return website_service.list_public(limit, skip, category, level, parse_csv(tags), industry, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/website-templates/{slug}", response_model=SnapshotResponse)
-def get_public_website_template(slug: str):
-    return website_service.get_public_by_slug(slug)
+def get_public_website_template(slug: str, request: Request):
+    return website_service.get_public_by_slug(slug, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/invitations/{publicSlug}", response_model=SnapshotResponse)
-def get_public_customer_invitation(publicSlug: str):
-    return customer_invitation_service.get_published_by_slug(publicSlug)
+def get_public_customer_invitation(publicSlug: str, request: Request):
+    return customer_invitation_service.get_published_by_slug(publicSlug, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/websites/{publicSlug}", response_model=SnapshotResponse)
-def get_public_customer_website(publicSlug: str):
-    return customer_website_service.get_published_by_slug(publicSlug)
+def get_public_customer_website(publicSlug: str, request: Request):
+    return customer_website_service.get_published_by_slug(publicSlug, base_url=str(request.base_url).rstrip("/"))

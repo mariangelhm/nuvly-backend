@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.errors import NuvlyError
-from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, CustomerWebsiteUpdate, WebsiteTemplateCreate, WebsiteTemplateUpdate
+from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, CustomerWebsiteUpdate, PublishRequest, WebsiteTemplateCreate, WebsiteTemplateUpdate
 from app.modules.domain.services import (
     CUSTOMER_WEBSITE_CONFIG,
     WEBSITE_TEMPLATE_CONFIG,
@@ -148,6 +148,13 @@ def _website_payload() -> Dict[str, Any]:
     }
 
 
+def _website_payload_with_uploaded_images() -> Dict[str, Any]:
+    payload = _website_payload()
+    payload["pages"][0]["blocks"][0]["props"]["mediaImage"] = "/static/uploads/website_template/asset_hero.png"
+    payload["metadata"]["coverImage"] = "/static/uploads/website_template/asset_cover.png"
+    return payload
+
+
 def test_public_template_read_does_not_create_customer_project() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -195,6 +202,33 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
     assert project["metadata"] == published_snapshot["snapshot"]["metadata"]
 
 
+def test_create_customer_project_absolutizes_uploaded_image_urls_in_response_only() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload_with_uploaded_images()))
+    template_service.publish(created["id"])
+
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        ),
+        base_url="http://localhost:8000",
+    )
+
+    stored = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
+
+    assert project["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert project["pages"][0]["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert project["metadata"]["coverImage"] == "http://localhost:8000/static/uploads/website_template/asset_cover.png"
+    assert stored is not None
+    assert stored["blocks"][0]["props"]["mediaImage"] == "/static/uploads/website_template/asset_hero.png"
+    assert stored["metadata"]["coverImage"] == "/static/uploads/website_template/asset_cover.png"
+
+
 def test_update_customer_project_generates_public_slug_from_title() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -238,6 +272,28 @@ def test_update_customer_project_generates_public_slug_from_title() -> None:
     assert updated["pages"][1]["id"] == "blk_hero::details"
 
 
+def test_get_customer_project_absolutizes_uploaded_image_urls() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload_with_uploaded_images()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    loaded = customer_service.get(project["id"], base_url="http://localhost:8000")
+
+    assert loaded["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert loaded["pages"][0]["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert loaded["metadata"]["coverImage"] == "http://localhost:8000/static/uploads/website_template/asset_cover.png"
+
+
 def test_pending_payment_requires_title_and_public_slug() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -274,6 +330,10 @@ def test_template_create_rejects_variant_blocked_by_plan() -> None:
         template_service.create(WebsiteTemplateCreate.model_validate(payload))
     except NuvlyError as exc:
         assert exc.code == "VARIANT_NOT_ALLOWED_FOR_PLAN"
+        assert "productType='website'" in exc.message
+        assert "planTier='essential'" in exc.message
+        assert "componentCode='hero'" in exc.message
+        assert "variantCode='H8'" in exc.message
     else:
         raise AssertionError("Expected VARIANT_NOT_ALLOWED_FOR_PLAN")
 
@@ -379,11 +439,14 @@ def test_template_create_rejects_component_blocked_by_plan_before_variant() -> N
         template_service.create(WebsiteTemplateCreate.model_validate(payload))
     except NuvlyError as exc:
         assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_PLAN"
+        assert "productType='website'" in exc.message
+        assert "planTier='essential'" in exc.message
+        assert "componentCode='leadForm'" in exc.message
     else:
         raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_PLAN")
 
 
-def test_template_create_rejects_component_blocked_by_category() -> None:
+def test_template_create_allows_component_previously_blocked_by_category() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -396,12 +459,10 @@ def test_template_create_rejects_component_blocked_by_category() -> None:
     payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
     payload["layout"]["sectionOrder"] = ["blk_projects"]
 
-    try:
-        template_service.create(WebsiteTemplateCreate.model_validate(payload))
-    except NuvlyError as exc:
-        assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_CATEGORY"
-    else:
-        raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_CATEGORY")
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["templateCategory"] == "beauty"
+    assert created["pages"][0]["blocks"][0]["type"] == "projects"
 
 
 def test_template_create_allows_custom_plan_with_unknown_variant_and_marks_flags() -> None:
@@ -493,7 +554,7 @@ def test_create_customer_project_from_custom_template_preserves_manual_base_pric
     assert project["metadata"]["basePrice"] == 99000
 
 
-def test_create_customer_project_from_custom_template_preserves_zero_base_price() -> None:
+def test_create_customer_project_from_custom_template_defaults_to_plan_base_price_when_snapshot_has_no_manual_price() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -513,7 +574,31 @@ def test_create_customer_project_from_custom_template_preserves_zero_base_price(
     )
 
     assert project["planTier"] == "custom"
+    assert project["metadata"]["basePrice"] == 250000
+
+
+def test_create_customer_project_from_custom_template_preserves_manual_zero_base_price() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["metadata"]["basePrice"] = 0
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"], publish_request=PublishRequest(priceMode="manual", basePrice=0))
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    assert project["planTier"] == "custom"
     assert project["metadata"]["basePrice"] == 0
+    assert project["metadata"]["basePriceSource"] == "manual"
 
 
 def test_update_customer_project_allows_custom_plan_with_unknown_variant() -> None:

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from app.core.catalog import VariantLevel
 from app.core.database import get_database
@@ -9,6 +9,7 @@ from app.modules.domain.schemas import (
     InvitationTemplateCreate,
     InvitationTemplateResponse,
     InvitationTemplateUpdate,
+    PublishRequest,
     SnapshotResponse,
     StudioDashboardResponse,
     StudioQuickSummaryResponse,
@@ -145,12 +146,13 @@ def _build_quick_summary() -> StudioQuickSummaryResponse:
 
 
 @router.post("/invitation-templates", response_model=InvitationTemplateResponse, status_code=201)
-def create_invitation_template(payload: InvitationTemplateCreate):
-    return invitation_service.create(payload)
+def create_invitation_template(payload: InvitationTemplateCreate, request: Request):
+    return invitation_service.create(payload, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/invitation-templates", response_model=list[InvitationTemplateResponse])
 def list_invitation_templates(
+    request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     templateStatus: TemplateStatus | None = Query(default=None),
@@ -158,41 +160,48 @@ def list_invitation_templates(
     level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
-    return invitation_service.list(limit, skip, templateStatus, category, level, catalogVisible)
+    return invitation_service.list(limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/invitation-templates/{template_id}", response_model=InvitationTemplateResponse)
-def get_invitation_template(template_id: str):
-    return invitation_service.get(template_id)
+def get_invitation_template(template_id: str, request: Request):
+    return invitation_service.get(template_id, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.put("/invitation-templates/{template_id}", response_model=InvitationTemplateResponse)
-def update_invitation_template(template_id: str, payload: InvitationTemplateUpdate):
-    return invitation_service.update(template_id, payload)
+def update_invitation_template(template_id: str, payload: InvitationTemplateUpdate, request: Request):
+    return invitation_service.update(template_id, payload, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.patch("/invitation-templates/{template_id}/status", response_model=InvitationTemplateResponse)
-def update_invitation_template_status(template_id: str, payload: TemplateStatusUpdate):
-    return invitation_service.update_status(template_id, payload.templateStatus, payload.changedBy, payload.reason)
+def update_invitation_template_status(template_id: str, payload: TemplateStatusUpdate, request: Request):
+    return invitation_service.update_status(
+        template_id,
+        payload.templateStatus,
+        payload.changedBy,
+        payload.reason,
+        base_url=str(request.base_url).rstrip("/"),
+    )
 
 
 @router.post("/invitation-templates/{template_id}/publish", response_model=SnapshotResponse)
-def publish_invitation_template(template_id: str):
-    return invitation_service.publish(template_id)
+def publish_invitation_template(template_id: str, request: Request, payload: PublishRequest | None = None):
+    return invitation_service.publish(template_id, base_url=str(request.base_url).rstrip("/"), publish_request=payload)
 
 
 @router.post("/invitation-templates/{template_id}/unpublish", response_model=InvitationTemplateResponse)
-def unpublish_invitation_template(template_id: str):
+def unpublish_invitation_template(template_id: str, request: Request):
     return invitation_service.unpublish(template_id)
 
 
 @router.post("/website-templates", response_model=WebsiteTemplateResponse, status_code=201)
-def create_website_template(payload: WebsiteTemplateCreate):
-    return website_service.create(payload)
+def create_website_template(payload: WebsiteTemplateCreate, request: Request):
+    return website_service.create(payload, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/website-templates", response_model=list[WebsiteTemplateResponse])
 def list_website_templates(
+    request: Request,
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     templateStatus: TemplateStatus | None = Query(default=None),
@@ -200,27 +209,33 @@ def list_website_templates(
     level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
-    return website_service.list(limit, skip, templateStatus, category, level, catalogVisible)
+    return website_service.list(limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.get("/website-templates/{template_id}", response_model=WebsiteTemplateResponse)
-def get_website_template(template_id: str):
-    return website_service.get(template_id)
+def get_website_template(template_id: str, request: Request):
+    return website_service.get(template_id, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.put("/website-templates/{template_id}", response_model=WebsiteTemplateResponse)
-def update_website_template(template_id: str, payload: WebsiteTemplateUpdate):
-    return website_service.update(template_id, payload)
+def update_website_template(template_id: str, payload: WebsiteTemplateUpdate, request: Request):
+    return website_service.update(template_id, payload, base_url=str(request.base_url).rstrip("/"))
 
 
 @router.patch("/website-templates/{template_id}/status", response_model=WebsiteTemplateResponse)
-def update_website_template_status(template_id: str, payload: TemplateStatusUpdate):
-    return website_service.update_status(template_id, payload.templateStatus, payload.changedBy, payload.reason)
+def update_website_template_status(template_id: str, payload: TemplateStatusUpdate, request: Request):
+    return website_service.update_status(
+        template_id,
+        payload.templateStatus,
+        payload.changedBy,
+        payload.reason,
+        base_url=str(request.base_url).rstrip("/"),
+    )
 
 
 @router.post("/website-templates/{template_id}/publish", response_model=SnapshotResponse)
-def publish_website_template(template_id: str):
-    return website_service.publish(template_id)
+def publish_website_template(template_id: str, payload: PublishRequest | None = None):
+    return website_service.publish(template_id, publish_request=payload)
 
 
 @router.post("/website-templates/{template_id}/unpublish", response_model=WebsiteTemplateResponse)

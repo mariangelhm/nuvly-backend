@@ -248,6 +248,20 @@ def _sync_pages_and_legacy_fields(normalized: Dict[str, Any], pages: List[Dict[s
     normalized["metadata"]["linkedPages"] = [deepcopy(page) for page in pages if page.get("kind") != PRIMARY_PAGE_KIND]
 
 
+def _apply_explicit_root_blocks_to_primary_page(
+    normalized: Dict[str, Any],
+    pages: List[Dict[str, Any]],
+) -> None:
+    explicit_blocks_value = normalized.get("blocks")
+    if not explicit_blocks_value:
+        return
+    explicit_blocks = _normalize_blocks(explicit_blocks_value)
+    primary_page = next((page for page in pages if page.get("kind") == PRIMARY_PAGE_KIND), None)
+    if primary_page is None:
+        raise NuvlyError("No se encontro la pagina principal.", 422, "PRIMARY_PAGE_NOT_FOUND")
+    primary_page["blocks"] = explicit_blocks
+
+
 def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:
     normalized = deepcopy(document)
     normalized["slug"] = slugify(normalized.get("slug") or normalized.get("title", ""))
@@ -268,6 +282,7 @@ def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str,
     normalized["metadata"].setdefault("planTier", normalized["planTier"])
     normalized["metadata"].setdefault("productType", normalized["productType"])
     pages = _normalize_pages(normalized)
+    _apply_explicit_root_blocks_to_primary_page(normalized, pages)
     _sync_pages_and_legacy_fields(normalized, pages)
 
     blocks = normalized["blocks"]

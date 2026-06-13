@@ -258,6 +258,15 @@ class CustomerProjectCreate(BaseModel):
     customerData: CustomerData = Field(default_factory=CustomerData)
 
 
+class PublishRequest(BaseModel):
+    priceMode: Literal["plan_base", "manual"] = "plan_base"
+    basePrice: Optional[float] = Field(default=None, ge=0)
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.priceMode == "manual" and self.basePrice is None:
+            raise ValueError("basePrice es requerido cuando priceMode='manual'.")
+
+
 class CustomerInvitationUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     slug: Optional[str] = Field(default=None, min_length=1, max_length=160)

@@ -740,12 +740,11 @@ class CatalogService:
     ) -> Dict[str, Any]:
         category = self.category_service.get_by_code(product_type, template_category)
         components = self.component_service.list(product_type=product_type)
-        allowed_codes = set(category.get("allowedComponentCodes", []))
         category_label = category.get("name", template_category)
         response_components: List[Dict[str, Any]] = []
 
         for component in components:
-            component_allowed = component["componentCode"] in allowed_codes or plan_tier in {"pro", "custom"}
+            component_allowed = True
             component_availability = build_component_catalog_state(
                 component_tier=component["componentTier"],
                 plan_tier=plan_tier,

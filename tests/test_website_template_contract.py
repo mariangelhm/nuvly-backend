@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.errors import NuvlyError
-from app.modules.domain.schemas import WebsiteTemplateCreate, WebsiteTemplateResponse, WebsiteTemplateUpdate
+from app.modules.domain.schemas import PublishRequest, WebsiteTemplateCreate, WebsiteTemplateResponse, WebsiteTemplateUpdate
 from app.modules.domain.services import TemplateService, WEBSITE_TEMPLATE_CONFIG
 from app.modules.pricing.service import ensure_pricing_seed
 
@@ -290,7 +290,47 @@ def test_website_template_custom_plan_preserves_manual_base_price_and_does_not_d
     assert snapshot["snapshot"]["metadata"]["basePrice"] == 123456
 
 
-def test_website_template_custom_plan_without_base_price_remains_zero_on_publish() -> None:
+def test_website_template_plus_plan_without_base_price_defaults_to_plan_base_price() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    payload = {
+        "title": "Plus Website Template",
+        "slug": "plus-website-template",
+        "experienceType": "web",
+        "productType": "website",
+        "planTier": "plus",
+        "templateCategory": "corporate",
+        "styles": {"themeId": "sunrise"},
+        "layout": {"sectionOrder": ["blk_hero"]},
+        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "pages": [
+            {
+                "id": "page_home",
+                "kind": "primary",
+                "title": "Inicio",
+                "slug": "",
+                "path": "/",
+                "parentPageId": None,
+                "source": {},
+                "seo": {},
+                "settings": {},
+                "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+            }
+        ],
+        "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
+        "metadata": {"category": "landing", "coverImage": "/assets/cover.jpg", "tags": ["agency"]},
+    }
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["metadata"]["basePrice"] == 19990
+
+    snapshot = service.publish(created["id"])
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 19990
+
+
+def test_website_template_custom_plan_without_base_price_defaults_to_plan_base_price() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -300,10 +340,25 @@ def test_website_template_custom_plan_without_base_price_remains_zero_on_publish
     created = service.create(WebsiteTemplateCreate.model_validate(payload))
 
     assert created["planTier"] == "custom"
-    assert created["metadata"]["basePrice"] == 0
+    assert created["metadata"]["basePrice"] == 250000
 
     snapshot = service.publish(created["id"])
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 250000
+
+
+def test_website_template_publish_allows_manual_base_price_override() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    payload = _build_full_website_payload()
+    payload["metadata"].pop("basePrice", None)
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    snapshot = service.publish(created["id"], publish_request=PublishRequest(priceMode="manual", basePrice=0))
+
     assert snapshot["snapshot"]["metadata"]["basePrice"] == 0
+    assert snapshot["snapshot"]["metadata"]["basePriceSource"] == "manual"
 
 
 def test_website_template_get_put_round_trip_is_lossless_for_editor_contract() -> None:
@@ -324,6 +379,48 @@ def test_website_template_get_put_round_trip_is_lossless_for_editor_contract() -
     second_without_updated_at.pop("updatedAt", None)
 
     assert second_without_updated_at == first_without_updated_at
+
+
+def test_website_template_put_prefers_explicit_root_blocks_when_pages_are_stale() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_build_full_website_payload()))
+    first_read = _response_json(service.get(created["id"]))
+
+    update_payload = deepcopy(first_read)
+    update_payload["blocks"][2]["props"]["image"] = "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    update_payload["blocks"][2]["props"]["items"][0]["image"] = "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+
+    service.update(created["id"], WebsiteTemplateUpdate.model_validate(update_payload))
+    second_read = _response_json(service.get(created["id"]))
+
+    assert second_read["blocks"][2]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    assert second_read["pages"][0]["blocks"][2]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    assert second_read["blocks"][2]["props"]["items"][0]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    assert second_read["pages"][0]["blocks"][2]["props"]["items"][0]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+
+
+def test_website_template_put_prefers_pages_when_root_blocks_are_omitted() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_build_full_website_payload()))
+    first_read = _response_json(service.get(created["id"]))
+
+    update_payload = deepcopy(first_read)
+    update_payload.pop("blocks", None)
+    update_payload["pages"][0]["blocks"][0]["props"]["image"] = "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
+    update_payload["pages"][0]["blocks"][0]["props"]["logoImage"] = "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+
+    service.update(created["id"], WebsiteTemplateUpdate.model_validate(update_payload))
+    second_read = _response_json(service.get(created["id"]))
+
+    assert second_read["blocks"][0]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
+    assert second_read["blocks"][0]["props"]["logoImage"] == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    assert second_read["pages"][0]["blocks"][0]["props"]["logoImage"] == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
 
 
 def test_website_template_preserves_website_data_when_front_persists_it() -> None:
