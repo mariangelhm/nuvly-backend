@@ -423,6 +423,25 @@ def test_website_template_put_prefers_pages_when_root_blocks_are_omitted() -> No
     assert second_read["pages"][0]["blocks"][0]["props"]["logoImage"] == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
 
 
+def test_website_template_put_preserves_existing_pages_when_root_blocks_are_empty() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_build_full_website_payload()))
+    first_read = _response_json(service.get(created["id"]))
+
+    update_payload = deepcopy(first_read)
+    update_payload["blocks"] = []
+    update_payload.pop("pages", None)
+
+    service.update(created["id"], WebsiteTemplateUpdate.model_validate(update_payload))
+    second_read = _response_json(service.get(created["id"]))
+
+    assert second_read["pages"][0]["blocks"] == first_read["pages"][0]["blocks"]
+    assert second_read["blocks"] == first_read["blocks"]
+
+
 def test_website_template_preserves_website_data_when_front_persists_it() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)

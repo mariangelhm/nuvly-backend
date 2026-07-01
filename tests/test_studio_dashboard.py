@@ -14,16 +14,22 @@ class FakeCollection:
         documents = [document.copy() for document in self.documents if _matches(document, filters)]
         if projection:
             projected: list[dict[str, Any]] = []
+            include_keys = [key for key, enabled in projection.items() if key != "_id" and enabled]
             for document in documents:
-                current = {}
-                for key, enabled in projection.items():
-                    if key == "_id" or not enabled:
-                        continue
-                    if key in document:
-                        current[key] = document[key]
+                if not include_keys:
+                    current = {key: value for key, value in document.items() if key != "_id"}
+                else:
+                    current = {}
+                    for key in include_keys:
+                        if key in document:
+                            current[key] = document[key]
                 projected.append(current)
             documents = projected
         return FakeCursor(documents)
+
+    def insert_one(self, document: dict[str, Any]):
+        self.documents.append(document.copy())
+        return None
 
 
 class FakeCursor:
@@ -33,6 +39,10 @@ class FakeCursor:
     def limit(self, count: int):
         if count > 0:
             self.documents = self.documents[:count]
+        return self
+
+    def sort(self, key: str, direction: int):
+        self.documents = sorted(self.documents, key=lambda item: item.get(key) or "", reverse=direction < 0)
         return self
 
     def __iter__(self):
@@ -98,3 +108,185 @@ def test_studio_dashboard_returns_recent_activity_and_quick_summary(monkeypatch)
     assert response["quickSummary"].activeUsers == 1
     assert len(response["recentActivity"]) >= 5
     assert response["recentActivity"][0]["title"] == 'Proyecto "Proyecto Web" pagado'
+
+
+def test_admin_can_create_internal_user_from_studio(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+    from app.modules.auth.schemas import InternalUserCreateRequest
+
+    fake_db = FakeDatabase({"users": []})
+    monkeypatch.setattr(studio_routes, "get_database", lambda: fake_db)
+    monkeypatch.setattr(
+        studio_routes,
+        "auth_service",
+        type(
+            "StubAuthService",
+            (),
+            {
+                "create_internal_user": staticmethod(
+                    lambda **kwargs: {
+                        "id": "usr_dev",
+                        "name": kwargs["name"],
+                        "email": kwargs["email"],
+                        "accountType": "internal",
+                        "internalRole": kwargs["internal_role"],
+                        "emailVerified": True,
+                        "active": True,
+                        "authProviders": ["nuvly"],
+                        "createdAt": "2026-07-01T00:00:00+00:00",
+                        "updatedAt": "2026-07-01T00:00:00+00:00",
+                        "lastLoginAt": None,
+                    }
+                )
+            },
+        )(),
+    )
+
+    response = studio_routes.create_internal_user(
+        InternalUserCreateRequest(
+            email="dev@nuvly.dev",
+            password="Devpass1#",
+            name="Dev Uno",
+            internalRole="developer",
+        ),
+        current_user={"id": "usr_admin", "internalRole": "admin", "accountType": "internal"},
+    )
+
+    assert response["internalRole"] == "developer"
+
+
+def test_list_internal_users_from_studio_filters_only_internal(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+
+    fake_db = FakeDatabase(
+        {
+            "users": [
+                {
+                    "id": "usr_admin",
+                    "name": "Admin",
+                    "email": "admin@nuvly.dev",
+                    "accountType": "internal",
+                    "internalRole": "admin",
+                    "emailVerified": True,
+                    "active": True,
+                    "authProviders": ["nuvly"],
+                    "createdAt": "2026-07-01T00:00:00+00:00",
+                    "updatedAt": "2026-07-01T00:00:00+00:00",
+                    "lastLoginAt": None,
+                },
+                {
+                    "id": "usr_dev",
+                    "name": "Dev Uno",
+                    "email": "dev@nuvly.dev",
+                    "accountType": "internal",
+                    "internalRole": "developer",
+                    "emailVerified": True,
+                    "active": True,
+                    "authProviders": ["nuvly"],
+                    "createdAt": "2026-07-02T00:00:00+00:00",
+                    "updatedAt": "2026-07-02T00:00:00+00:00",
+                    "lastLoginAt": None,
+                },
+                {
+                    "id": "usr_customer",
+                    "name": "Cliente",
+                    "email": "cliente@test.dev",
+                    "accountType": "customer",
+                    "emailVerified": False,
+                    "active": True,
+                    "authProviders": ["nuvly"],
+                    "createdAt": "2026-07-03T00:00:00+00:00",
+                    "updatedAt": "2026-07-03T00:00:00+00:00",
+                    "lastLoginAt": None,
+                },
+            ]
+        }
+    )
+    monkeypatch.setattr(studio_routes, "get_database", lambda: fake_db)
+
+    response = studio_routes.list_internal_users()
+
+    assert len(response) == 2
+    assert all(item["accountType"] == "internal" for item in response)
+
+
+def test_admin_can_create_discount_code_from_studio(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+    from app.modules.discounts.schemas import AdminDiscountCodeCreateRequest
+
+    monkeypatch.setattr(
+        studio_routes,
+        "discount_code_service",
+        type(
+            "StubDiscountCodeService",
+            (),
+            {
+                "create_code": staticmethod(
+                    lambda payload: {
+                        "id": "dsc_1",
+                        "code": payload.code,
+                        "discountType": payload.discountType,
+                        "value": payload.value,
+                        "appliesTo": payload.appliesTo,
+                        "active": payload.active,
+                        "description": payload.description,
+                        "expiresAt": payload.expiresAt,
+                        "createdAt": "2026-07-01T00:00:00+00:00",
+                        "updatedAt": "2026-07-01T00:00:00+00:00",
+                    }
+                )
+            },
+        )(),
+    )
+
+    response = studio_routes.create_discount_code(
+        AdminDiscountCodeCreateRequest(
+            code="nuvly20",
+            discountType="percentage",
+            value=20,
+            appliesTo="all",
+            active=True,
+            description="Campaña invierno",
+        ),
+        current_user={"id": "usr_admin", "internalRole": "admin", "accountType": "internal"},
+    )
+
+    assert response["code"] == "NUVLY20"
+    assert response["discountType"] == "percentage"
+    assert response["value"] == 20
+
+
+def test_list_discount_codes_from_studio(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+
+    monkeypatch.setattr(
+        studio_routes,
+        "discount_code_service",
+        type(
+            "StubDiscountCodeService",
+            (),
+            {
+                "list_codes": staticmethod(
+                    lambda: [
+                        {
+                            "id": "dsc_2",
+                            "code": "FIX5000",
+                            "discountType": "fixed",
+                            "value": 5000,
+                            "appliesTo": "website",
+                            "active": True,
+                            "description": None,
+                            "expiresAt": None,
+                            "createdAt": "2026-07-02T00:00:00+00:00",
+                            "updatedAt": "2026-07-02T00:00:00+00:00",
+                        }
+                    ]
+                )
+            },
+        )(),
+    )
+
+    response = studio_routes.list_discount_codes()
+
+    assert len(response) == 1
+    assert response[0]["code"] == "FIX5000"

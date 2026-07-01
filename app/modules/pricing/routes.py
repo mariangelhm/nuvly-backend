@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+
+from app.modules.auth.dependencies import get_current_internal_user
 
 from app.core.catalog import ProductType, VariantLevel
 from app.modules.pricing.schemas import (
@@ -27,7 +29,7 @@ from app.modules.pricing.service import (
 )
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
-admin_router = APIRouter(prefix="/admin/pricing", tags=["admin-pricing"])
+admin_router = APIRouter(prefix="/admin/pricing", tags=["admin-pricing"], dependencies=[Depends(get_current_internal_user)])
 
 plan_service = PricingPlanService()
 component_service = PricingComponentService()

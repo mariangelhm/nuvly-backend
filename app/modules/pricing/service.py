@@ -293,7 +293,7 @@ def build_variant_catalog_state(
         "lockLabel": lock_label,
         "locked": locked,
         "lockReason": lock_reason,
-        "extraPrice": int(variant.get("extraPrice", 0) or 0),
+        "extraPrice": int(variant.get("extraPrice", 0) or 0) if status == "extra" else None,
     }
 
 

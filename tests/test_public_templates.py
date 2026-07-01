@@ -302,3 +302,38 @@ def test_unpublished_template_is_hidden_from_public_catalog_and_detail() -> None
         assert exc.code == "PUBLIC_TEMPLATE_NOT_FOUND"
     else:
         raise AssertionError("Expected unpublished template to be unavailable publicly")
+
+
+def test_unpublished_template_can_be_deprecated_logically() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))
+    service.publish(created["id"])
+    service.unpublish(created["id"], changed_by="studio", reason="unpublish_template")
+
+    deprecated = service.update_status(created["id"], "deprecated", "studio", "logical_delete")
+
+    assert deprecated["templateStatus"] == "deprecated"
+    assert deprecated["statusHistory"][-1]["status"] == "deprecated"
+    assert deprecated["publishedSnapshotId"] is not None
+    assert deprecated["lastPublishedAt"] is not None
+    assert deprecated["seo"]["noIndex"] is True
+
+
+def test_published_template_cannot_be_deprecated_directly() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+
+    created = service.create(WebsiteTemplateCreate.model_validate(_website_payload(catalog_visible=False)))
+    service.publish(created["id"])
+
+    try:
+        service.update_status(created["id"], "deprecated", "studio", "logical_delete")
+    except NuvlyError as exc:
+        assert exc.status_code == 409
+        assert exc.code == "PUBLISHED_TEMPLATE_CANNOT_BE_DEPRECATED"
+    else:
+        raise AssertionError("Expected published template deprecation to be blocked")

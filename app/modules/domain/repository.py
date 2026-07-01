@@ -36,6 +36,7 @@ class DomainRepository:
             "key_pattern": key_pattern,
             "key_value": key_value,
             "is_slug_duplicate": "slug" in key_pattern or "slug" in key_value,
+            "is_code_duplicate": "codeNormalized" in key_pattern or "codeNormalized" in key_value or "code" in key_pattern or "code" in key_value,
         }
 
     def insert_document(
@@ -60,7 +61,7 @@ class DomainRepository:
                 context["key_value"],
                 context["details"],
             )
-            if context["is_slug_duplicate"]:
+            if context["is_slug_duplicate"] or context["is_code_duplicate"]:
                 raise NuvlyError(duplicate_message, 409, duplicate_code)
             raise NuvlyError(
                 f"Mongo duplicate key conflict in {collection_name}. Check logs for index details.",
@@ -124,7 +125,7 @@ class DomainRepository:
                 context["key_value"],
                 context["details"],
             )
-            if context["is_slug_duplicate"]:
+            if context["is_slug_duplicate"] or context["is_code_duplicate"]:
                 raise NuvlyError(duplicate_message, 409, duplicate_code)
             raise NuvlyError(
                 f"Mongo duplicate key conflict in {collection_name}. Check logs for index details.",

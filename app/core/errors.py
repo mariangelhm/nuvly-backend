@@ -19,6 +19,43 @@ def _request_context(request: Request) -> str:
     return f"{request.method} {request.url.path}"
 
 
+def _validation_details(exc: RequestValidationError) -> list[dict[str, object]]:
+    details: list[dict[str, object]] = []
+    for error in exc.errors():
+        raw_loc = error.get("loc", ())
+        field_path = [str(part) for part in raw_loc if part != "body"]
+        details.append(
+            {
+                "field": ".".join(field_path) if field_path else None,
+                "message": error.get("msg", "Invalid value."),
+                "type": error.get("type", "validation_error"),
+            }
+        )
+    return details
+
+
+def _validation_error_payload(request: Request, exc: RequestValidationError) -> dict[str, object]:
+    details = _validation_details(exc)
+    path = request.url.path.rstrip("/")
+    if path.endswith("/auth/register"):
+        return {
+            "code": "AUTH_REGISTER_VALIDATION_ERROR",
+            "message": "Datos inválidos para registro.",
+            "details": details,
+        }
+    if path.endswith("/auth/login"):
+        return {
+            "code": "AUTH_LOGIN_VALIDATION_ERROR",
+            "message": "Datos inválidos para inicio de sesión.",
+            "details": details,
+        }
+    return {
+        "code": "REQUEST_VALIDATION_ERROR",
+        "message": "Request validation failed.",
+        "details": details,
+    }
+
+
 async def handle_nuvly_error(request: Request, exc: NuvlyError):
     logger.warning(
         "Handled NuvlyError | request=%s | status=%s | code=%s | message=%s",
@@ -39,9 +76,10 @@ async def handle_request_validation_error(request: Request, exc: RequestValidati
         _request_context(request),
         exc.errors(),
     )
+    payload = _validation_error_payload(request, exc)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"error": {"code": "REQUEST_VALIDATION_ERROR", "message": "Request validation failed.", "details": exc.errors()}},
+        content={"error": payload},
     )
 
 

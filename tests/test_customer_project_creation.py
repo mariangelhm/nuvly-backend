@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
+import app.main as main_module
+import pytest
 from app.core.errors import NuvlyError
 from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, CustomerWebsiteUpdate, PublishRequest, WebsiteTemplateCreate, WebsiteTemplateUpdate
 from app.modules.domain.services import (
@@ -87,6 +89,12 @@ class InMemoryDomainRepository:
 
     @staticmethod
     def _matches(document: Dict[str, Any], filters: Dict[str, Any]) -> bool:
+        if "$or" in filters:
+            clauses = filters["$or"] or []
+            remaining_filters = {key: value for key, value in filters.items() if key != "$or"}
+            if not any(InMemoryDomainRepository._matches(document, clause) for clause in clauses):
+                return False
+            return InMemoryDomainRepository._matches(document, remaining_filters)
         for key, expected in filters.items():
             value = _get_nested(document, key)
             if isinstance(expected, dict) and "$in" in expected:
@@ -187,6 +195,10 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
 
     assert project["templateId"] == created["id"]
     assert project["templateSnapshotId"] == published_snapshot["id"]
+    assert project["ownerId"] is None
+    assert project["ownerEmail"] == "lara@test.dev"
+    assert project["selectionSource"] == "catalog"
+    assert project["selectedAt"]
     assert project["productType"] == "website"
     assert project["planTier"] == "plus"
     assert project["templateCategory"] == "corporate"
@@ -200,6 +212,190 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
     assert project["pages"] == published_snapshot["snapshot"]["pages"]
     assert project["seo"] == published_snapshot["snapshot"]["seo"]
     assert project["metadata"] == published_snapshot["snapshot"]["metadata"]
+
+
+def test_create_customer_project_can_link_authenticated_user_context() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+            externalAuthProvider="nuvly",
+            externalAuthSubject="usr_123",
+        ),
+        current_user={"id": "usr_123", "email": "lara@test.dev", "name": "Lara"},
+    )
+
+    assert project["ownerId"] == "usr_123"
+    assert project["ownerEmail"] == "lara@test.dev"
+    assert project["externalAuthProvider"] == "nuvly"
+    assert project["externalAuthSubject"] == "usr_123"
+
+
+def test_list_customer_projects_by_owner_matches_owner_id_and_owner_email() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+
+    by_id = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+            externalAuthProvider="nuvly",
+            externalAuthSubject="usr_123",
+        ),
+        current_user={"id": "usr_123", "email": "lara@test.dev", "name": "Lara"},
+    )
+    by_email = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+    other = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Otro", email="otro@test.dev", phone="999"),
+        )
+    )
+
+    projects = customer_service.list_by_owner(owner_id="usr_123", owner_email="lara@test.dev")
+
+    assert [project["id"] for project in projects] == [by_email["id"], by_id["id"]]
+    assert all(project["ownerEmail"] == "lara@test.dev" for project in projects)
+    assert other["id"] not in {project["id"] for project in projects}
+
+
+def test_customer_project_summary_uses_shared_listing_shape() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    summary = customer_service.to_product_summary(project)
+
+    assert summary["id"] == project["id"]
+    assert summary["productType"] == "website"
+    assert summary["templateId"] == project["templateId"]
+    assert summary["payment"]["status"] == "unpaid"
+    assert summary["metadata"]["coverImage"] == project["metadata"]["coverImage"]
+
+
+def test_get_customer_project_for_owner_allows_owner_email_match() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    loaded = customer_service.get_for_owner(project["id"], owner_email="lara@test.dev")
+
+    assert loaded["id"] == project["id"]
+
+
+def test_get_customer_project_for_owner_rejects_other_customer() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    with pytest.raises(NuvlyError) as exc:
+        customer_service.get_for_owner(project["id"], owner_id="usr_other", owner_email="otro@test.dev")
+
+    assert exc.value.status_code == 403
+    assert exc.value.code == "CUSTOMER_PROJECT_FORBIDDEN"
+
+
+def test_update_customer_project_for_owner_rejects_other_customer() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    with pytest.raises(NuvlyError) as exc:
+        customer_service.update_for_owner(
+            project["id"],
+            CustomerWebsiteUpdate.model_validate(
+                {
+                    "title": project["title"],
+                    "slug": project["slug"],
+                    "planTier": project["planTier"],
+                    "templateCategory": project["templateCategory"],
+                    "styles": project["styles"],
+                    "layout": project["layout"],
+                    "blocks": project["blocks"],
+                    "seo": project["seo"],
+                    "metadata": project["metadata"],
+                    "websiteData": project["websiteData"],
+                    "customerData": project["customerData"],
+                    "leadForms": project["leadForms"],
+                    "formSubmissions": project["formSubmissions"],
+                    "customDomain": project["customDomain"],
+                }
+            ),
+            owner_id="usr_other",
+            owner_email="otro@test.dev",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.code == "CUSTOMER_PROJECT_FORBIDDEN"
+
+
+def test_customer_listing_routes_are_registered_in_openapi() -> None:
+    paths = main_module.app.openapi()["paths"]
+
+    assert "/api/customer/products" in paths
+    assert "get" in paths["/api/customer/products"]
+    assert "/api/customer/invitations" in paths
+    assert "get" in paths["/api/customer/invitations"]
+    assert "/api/customer/websites" in paths
+    assert "get" in paths["/api/customer/websites"]
 
 
 def test_create_customer_project_absolutizes_uploaded_image_urls_in_response_only() -> None:
@@ -294,6 +490,47 @@ def test_get_customer_project_absolutizes_uploaded_image_urls() -> None:
     assert loaded["metadata"]["coverImage"] == "http://localhost:8000/static/uploads/website_template/asset_cover.png"
 
 
+def test_update_customer_project_preserves_existing_pages_when_root_blocks_are_empty() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    updated = customer_service.update(
+        project["id"],
+        CustomerWebsiteUpdate.model_validate(
+            {
+                "title": project["title"],
+                "slug": project["slug"],
+                "planTier": project["planTier"],
+                "templateCategory": project["templateCategory"],
+                "styles": project["styles"],
+                "layout": project["layout"],
+                "blocks": [],
+                "seo": project["seo"],
+                "metadata": project["metadata"],
+                "websiteData": project["websiteData"],
+                "customerData": project["customerData"],
+                "leadForms": project["leadForms"],
+                "formSubmissions": project["formSubmissions"],
+                "customDomain": project["customDomain"],
+            }
+        ),
+    )
+
+    assert updated["pages"][0]["blocks"] == project["pages"][0]["blocks"]
+    assert updated["blocks"] == project["blocks"]
+
+
 def test_pending_payment_requires_title_and_public_slug() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -375,6 +612,69 @@ def test_template_create_accepts_editor_variant_labels_and_component_code_aliase
 
     assert created["pages"][0]["blocks"][0]["variant"] == "M7-Organic-Premium-Frame"
     assert created["pages"][0]["blocks"][1]["type"] == "whatsappFloating"
+
+
+def test_template_create_accepts_modern_studio_variant_codes() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "pro"
+    payload["templateCategory"] = "beauty"
+    payload["pages"][0]["blocks"] = [
+        {
+            "id": "blk_navigation",
+            "type": "navigation",
+            "componentCode": "navigation",
+            "variant": "MP1-Organic-Premium-Frame",
+            "variantCode": "MP1-Organic-Premium-Frame",
+            "enabled": True,
+            "order": 1,
+            "props": {},
+            "settings": {},
+        },
+        {
+            "id": "blk_hero",
+            "type": "hero",
+            "componentCode": "hero",
+            "variant": "HE1-Modern-Impact",
+            "variantCode": "HE1-Modern-Impact",
+            "enabled": True,
+            "order": 2,
+            "props": {},
+            "settings": {},
+        },
+        {
+            "id": "blk_services",
+            "type": "services",
+            "componentCode": "services",
+            "variant": "SE1-Glass-Card",
+            "variantCode": "SE1-Glass-Card",
+            "enabled": True,
+            "order": 3,
+            "props": {},
+            "settings": {},
+        },
+        {
+            "id": "blk_lead_form",
+            "type": "leadForm",
+            "componentCode": "leadForm",
+            "variant": "LFP5-Step-by-Step-Modal-Reveal",
+            "variantCode": "LFP5-Step-by-Step-Modal-Reveal",
+            "enabled": True,
+            "order": 4,
+            "props": {},
+            "settings": {},
+        },
+    ]
+    payload["layout"]["sectionOrder"] = ["blk_navigation", "blk_hero", "blk_services", "blk_lead_form"]
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["pages"][0]["blocks"][0]["variant"] == "MP1-Organic-Premium-Frame"
+    assert created["pages"][0]["blocks"][1]["variant"] == "HE1-Modern-Impact"
+    assert created["pages"][0]["blocks"][2]["variant"] == "SE1-Glass-Card"
+    assert created["pages"][0]["blocks"][3]["variant"] == "LFP5-Step-by-Step-Modal-Reveal"
 
 
 def test_template_create_rejects_unknown_variant_as_bad_request() -> None:

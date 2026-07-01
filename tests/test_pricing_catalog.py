@@ -338,6 +338,84 @@ def test_catalog_components_calculates_variant_statuses() -> None:
     assert h8["locked"] is True
 
 
+def test_catalog_components_includes_modern_navigation_premium_variants() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    response = service.list_components_for_catalog("website", "construction", "pro")
+
+    navigation = next(component for component in response["components"] if component["componentCode"] == "navigation")
+    variants_by_code = {variant["variantCode"]: variant for variant in navigation["variants"]}
+
+    expected = {
+        "MP1-Organic-Premium-Frame": (
+            "Marco orgánico premium",
+            "Navegación premium superpuesta con frame orgánico.",
+        ),
+        "MP2-Breadcrumb-Multipage": (
+            "Menú multipágina con breadcrumb",
+            "Navegación premium con breadcrumb para sitios multipágina.",
+        ),
+        "MP3-Organic-Login": (
+            "Menú orgánico con inicio de sesión",
+            "Navegación premium orgánica con acceso de usuario.",
+        ),
+    }
+
+    for variant_code, (name, description) in expected.items():
+        variant = variants_by_code[variant_code]
+        assert variant["name"] == name
+        assert variant["description"] == description
+        assert variant["variantTier"] == "premium"
+        assert variant["status"] == "included"
+        assert variant["locked"] is False
+        assert variant["lockLabel"] == ""
+        assert variant["lockReason"] == ""
+        assert variant["extraPrice"] is None
+        assert variant["currency"] == "CLP"
+        assert variant["active"] is True
+
+
+def test_catalog_components_includes_modern_website_template_variants() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = CatalogService(repository=repository)
+
+    response = service.list_components_for_catalog("website", "beauty", "pro")
+    components_by_code = {component["componentCode"]: component for component in response["components"]}
+
+    expected_variants = {
+        "navigation": ["ME1-Overlay-Nav", "ME2-Split-Nav", "ME3-Minimal-Sticky", "MA1-Kinetic-Typography-Reveal", "MA2-Neomorphic-Inverted", "MA3-Distorted-Mesh-Gradient", "MP1-Organic-Premium-Frame", "MP2-Breadcrumb-Multipage", "MP3-Organic-Login"],
+        "hero": ["HE1-Modern-Impact", "HE2-Split-Screen", "HE3-Parallax-Layered", "HA1-Multi-Layer-Kinetic-Parallax", "HA2-Zoom-On-Scroll-Reveal", "HA3-Immersion-Typography-Tunnel", "HP1-Editorial-Video-Upload", "HP2-Editorial-Video-Youtube", "HP3-Cinematic-Image-Frame"],
+        "services": ["SE1-Glass-Card", "SE2-Blueprint-Style", "SE3-Number-Focus", "SA1-Neomorphic-Hover-Depth", "SA2-Kinetic-Icon-Animation", "SA3-Floating-3D-Layers", "SA4-Bento-Kinetic-Stack", "SP1-Dynamic-Path-Cards", "SP2-Premium-Circle-Link-Canvas"],
+        "leadForm": ["LFP1-Multi-Step", "LFP2-Map-Lead", "LFP3-Conversational", "LFP4-Gamified-Cost-Calculator", "LFP5-Step-by-Step-Modal-Reveal"],
+        "content": ["COE1-Focus-Reveal", "COA1-Data-Wall", "COA2-Interactive-Blueprint-Glossary"],
+        "projects": ["PE1-Masonry-Grid", "PE2-Parallax-Tiles-Reveal", "PE3-Interactive-Tabs", "PA1-Infinite-Draggable-Grid", "PA2-Full-Width-Slider", "PA3-Liquid-Distortion-Hover", "PP1-Smart-Sync-Reader"],
+        "beforeAfter": ["BAE1-Slider-Classic", "BAE2-Fade-Interaction", "BAE3-Diagonal-Split", "BAA1-Lens-Magnifier-Effect", "BAA2-3D-Card-Flip", "BAP1-Curtain-Reveal-Parallax"],
+        "process": ["TE1-Vertical-Snake", "TE2-Horizontal-Steps", "TA1-Circular-Orbit", "TP1-Blueprint-Scanner"],
+        "socialProof": ["PSE1-Infinite-Marquee", "PSE2-Quote-Bubble", "PSA1-Editorial-Float", "PSP1-Auto-Scroll-Rating-Marquee", "PSP2-Video-Grid"],
+        "footer": ["FTE1-Industrial-Dark", "FTE2-Minimal-Clean", "FTE3-Column-Big-Text", "FTA1-Particle-Background-Shader", "FTA2-Kinetic-Typo-Marquee", "FTA3-Reveal-on-Scroll-Total", "FTP1-Corporate-Network-Hub"],
+        "whatsapp_floating": ["WAE1-Floating-Button", "WAE2-Floating-With-Label", "WAA1-Footer-Docked-Help"],
+        "branches": ["SUP1-Interactive-Location-Grid"],
+        "immersiveVideo": ["VIP1-Cinematic-Theater-Modal"],
+        "youtubeVideo": ["YTE1-Embedded-Youtube"],
+        "blankCanvas": ["BCE1-Blank-Canvas"],
+        "maintainer": ["MTP1-Configurable-Maintainer"],
+    }
+
+    for component_code, variant_codes in expected_variants.items():
+        component = components_by_code[component_code]
+        variants_by_code = {variant["variantCode"]: variant for variant in component["variants"]}
+        for variant_code in variant_codes:
+            assert variant_code in variants_by_code
+            variant = variants_by_code[variant_code]
+            assert variant["status"] == "included"
+            assert variant["locked"] is False
+            assert variant["active"] is True
+            assert variant["extraPrice"] is None
+
+
 def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
@@ -410,10 +488,12 @@ def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -
         assert whatsapp["status"] == "included"
         assert whatsapp["locked"] is False
         assert whatsapp["label"] == "Disponible"
-        assert [variant["variantCode"] for variant in whatsapp["variants"]] == ["WA1", "WA2", "WA3"]
-        assert all(variant["status"] == "included" for variant in whatsapp["variants"])
-        assert all(variant["locked"] is False for variant in whatsapp["variants"])
-        assert all(variant["extraPrice"] == 0 for variant in whatsapp["variants"])
+        variants_by_code = {variant["variantCode"]: variant for variant in whatsapp["variants"]}
+        for code in ["WA1", "WA2", "WA3"]:
+            assert code in variants_by_code
+            assert variants_by_code[code]["status"] == "included"
+            assert variants_by_code[code]["locked"] is False
+            assert variants_by_code[code]["extraPrice"] is None
 
 
 def test_catalog_components_blank_canvas_is_available_from_plus() -> None:

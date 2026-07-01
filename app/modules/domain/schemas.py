@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, VariantLevel
 
-TemplateStatus = Literal["draft", "private_preview", "published", "unpublished", "archived"]
+TemplateStatus = Literal["draft", "private_preview", "published", "unpublished", "deprecated", "archived"]
 CustomerStatus = Literal["draft", "temporary", "editing", "abandoned", "pending_payment", "payment_failed", "paid", "published", "cancelled"]
 PaymentStatus = Literal["unpaid", "pending", "paid", "failed", "refunded"]
 
@@ -256,6 +256,10 @@ class WebsiteTemplateResponse(WebsiteTemplateUpdate):
 class CustomerProjectCreate(BaseModel):
     templateId: str = Field(min_length=1)
     customerData: CustomerData = Field(default_factory=CustomerData)
+    selectionSource: str = Field(default="catalog", min_length=1, max_length=80)
+    selectedAt: Optional[str] = None
+    externalAuthProvider: Optional[str] = Field(default=None, max_length=80)
+    externalAuthSubject: Optional[str] = Field(default=None, max_length=160)
 
 
 class PublishRequest(BaseModel):
@@ -315,8 +319,14 @@ class CustomerWebsiteUpdate(BaseModel):
 
 class CustomerInvitationResponse(CustomerInvitationUpdate):
     id: str
+    ownerId: Optional[str] = None
+    ownerEmail: Optional[str] = None
     templateId: str
     templateSnapshotId: str
+    selectionSource: str = "catalog"
+    selectedAt: str
+    externalAuthProvider: Optional[str] = None
+    externalAuthSubject: Optional[str] = None
     customerStatus: CustomerStatus
     payment: PaymentInfo = Field(default_factory=PaymentInfo)
     statusHistory: List[StatusHistoryEntry] = Field(default_factory=list)
@@ -329,8 +339,14 @@ class CustomerInvitationResponse(CustomerInvitationUpdate):
 
 class CustomerWebsiteResponse(CustomerWebsiteUpdate):
     id: str
+    ownerId: Optional[str] = None
+    ownerEmail: Optional[str] = None
     templateId: str
     templateSnapshotId: str
+    selectionSource: str = "catalog"
+    selectedAt: str
+    externalAuthProvider: Optional[str] = None
+    externalAuthSubject: Optional[str] = None
     customerStatus: CustomerStatus
     payment: PaymentInfo = Field(default_factory=PaymentInfo)
     statusHistory: List[StatusHistoryEntry] = Field(default_factory=list)
@@ -339,6 +355,33 @@ class CustomerWebsiteResponse(CustomerWebsiteUpdate):
     createdAt: str
     updatedAt: str
     model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerProductSummaryResponse(BaseModel):
+    id: str
+    title: str
+    productType: ProductType
+    planTier: PlanTier
+    templateCategory: TemplateCategoryCode
+    customerStatus: CustomerStatus
+    publicSlug: Optional[str] = None
+    ownerId: Optional[str] = None
+    ownerEmail: Optional[str] = None
+    templateId: str
+    templateSnapshotId: str
+    selectionSource: str = "catalog"
+    selectedAt: str
+    payment: PaymentInfo = Field(default_factory=PaymentInfo)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    createdAt: str
+    updatedAt: str
+    lastPublishedAt: Optional[str] = None
+
+
+class CustomerProductsResponse(BaseModel):
+    products: List[CustomerProductSummaryResponse] = Field(default_factory=list)
+    invitations: List[CustomerInvitationResponse] = Field(default_factory=list)
+    websites: List[CustomerWebsiteResponse] = Field(default_factory=list)
 
 
 class SnapshotResponse(BaseModel):

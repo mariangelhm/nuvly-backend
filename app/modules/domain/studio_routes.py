@@ -1,10 +1,15 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.core.catalog import VariantLevel
 from app.core.database import get_database
+from app.modules.auth.dependencies import get_current_admin_user, get_current_internal_user
+from app.modules.auth.schemas import AuthUserResponse, InternalUserCreateRequest
+from app.modules.auth.service import AuthService
+from app.modules.discounts.schemas import AdminDiscountCodeCreateRequest, AdminDiscountCodeResponse
+from app.modules.discounts.service import DiscountCodeService
 from app.modules.domain.schemas import (
     InvitationTemplateCreate,
     InvitationTemplateResponse,
@@ -26,9 +31,11 @@ from app.modules.domain.services import (
 )
 
 router = APIRouter(prefix="/studio", tags=["studio"])
-admin_router = APIRouter(prefix="/admin/studio", tags=["admin-studio"])
+admin_router = APIRouter(prefix="/admin/studio", tags=["admin-studio"], dependencies=[Depends(get_current_internal_user)])
 invitation_service = TemplateService(INVITATION_TEMPLATE_CONFIG)
 website_service = TemplateService(WEBSITE_TEMPLATE_CONFIG)
+auth_service = AuthService()
+discount_code_service = DiscountCodeService()
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -249,3 +256,38 @@ def get_studio_dashboard():
         "recentActivity": _build_recent_activity(),
         "quickSummary": _build_quick_summary(),
     }
+
+
+@admin_router.get("/users", response_model=list[AuthUserResponse])
+def list_internal_users():
+    db = get_database()
+    if not _collection_exists(db, "users"):
+        return []
+    users = db["users"].find({"accountType": "internal"}, {"_id": 0}).sort("createdAt", -1)
+    return list(users)
+
+
+@admin_router.post("/users", response_model=AuthUserResponse, status_code=status.HTTP_201_CREATED)
+def create_internal_user(
+    payload: InternalUserCreateRequest,
+    current_user: dict = Depends(get_current_admin_user),
+):
+    return auth_service.create_internal_user(
+        email=payload.email,
+        password=payload.password,
+        name=payload.name,
+        internal_role=payload.internalRole,
+    )
+
+
+@admin_router.get("/discount-codes", response_model=list[AdminDiscountCodeResponse])
+def list_discount_codes():
+    return discount_code_service.list_codes()
+
+
+@admin_router.post("/discount-codes", response_model=AdminDiscountCodeResponse, status_code=status.HTTP_201_CREATED)
+def create_discount_code(
+    payload: AdminDiscountCodeCreateRequest,
+    current_user: dict = Depends(get_current_admin_user),
+):
+    return discount_code_service.create_code(payload)

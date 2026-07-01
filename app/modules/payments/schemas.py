@@ -16,6 +16,7 @@ class CreateCheckoutRequest(BaseModel):
     provider: PaymentProvider
     withCustomDomain: bool = False
     customDomain: Optional[str] = None
+    discountCode: Optional[str] = Field(default=None, min_length=1, max_length=32)
 
 
 class CreateCheckoutResponse(BaseModel):
@@ -25,6 +26,11 @@ class CreateCheckoutResponse(BaseModel):
     provider: PaymentProvider
     status: PaymentStatus
     amount: float
+    subtotalAmount: float
+    discountAmount: int = 0
+    discountCode: Optional[str] = None
+    discountType: Optional[str] = None
+    discountValue: Optional[int] = None
     currency: str
     checkoutUrl: str
     withCustomDomain: bool
@@ -48,6 +54,9 @@ class ManualPaymentConfirmationResponse(BaseModel):
     projectType: Optional[ProjectType] = None
     projectId: Optional[str] = None
     amount: Optional[float] = None
+    subtotalAmount: Optional[float] = None
+    discountAmount: Optional[int] = None
+    discountCode: Optional[str] = None
     currency: Optional[str] = None
     finalUrl: Optional[str] = None
     websiteUrl: Optional[str] = None

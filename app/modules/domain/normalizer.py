@@ -19,6 +19,7 @@ NON_INDEXABLE_STATUSES = {
     "draft",
     "private_preview",
     "unpublished",
+    "deprecated",
     "archived",
     "temporary",
     "editing",

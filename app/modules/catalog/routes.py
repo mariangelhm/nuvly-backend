@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+
+from app.modules.auth.dependencies import get_current_internal_user
 
 from app.core.catalog import PlanTier, ProductType
 from app.modules.pricing.schemas import (
@@ -11,7 +13,7 @@ from app.modules.pricing.schemas import (
 from app.modules.pricing.service import CatalogService, TemplateCategoryService
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
-admin_router = APIRouter(prefix="/admin/catalog", tags=["admin-catalog"])
+admin_router = APIRouter(prefix="/admin/catalog", tags=["admin-catalog"], dependencies=[Depends(get_current_internal_user)])
 
 catalog_service = CatalogService()
 template_category_service = TemplateCategoryService()

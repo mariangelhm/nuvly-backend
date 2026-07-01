@@ -240,6 +240,83 @@ def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_c
     assert stored_project["customDomain"] == "www.buildframe.cl"
 
 
+def test_create_checkout_applies_percentage_discount_code() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    repository.insert_document(
+        "discount_codes",
+        {
+            "id": "dsc_1",
+            "code": "NUVLY10",
+            "codeNormalized": "NUVLY10",
+            "discountType": "percentage",
+            "value": 10,
+            "appliesTo": "website",
+            "active": True,
+            "description": "10% descuento",
+            "expiresAt": None,
+            "createdAt": "2026-07-01T00:00:00+00:00",
+            "updatedAt": "2026-07-01T00:00:00+00:00",
+        },
+        duplicate_message="duplicate",
+    )
+    service = PaymentService(repository=repository)
+
+    payment = service.create_checkout(
+        CreateCheckoutRequest(
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+            discountCode="nuvly10",
+        )
+    )
+
+    stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
+    assert payment["subtotalAmount"] == 149
+    assert payment["discountAmount"] == 15
+    assert payment["amount"] == 134
+    assert payment["discountCode"] == "NUVLY10"
+    assert stored_project is not None
+    assert stored_project["payment"]["discountCode"] == "NUVLY10"
+    assert stored_project["payment"]["discountAmount"] == 15
+
+
+def test_create_checkout_rejects_discount_code_for_wrong_project_type() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_invitation_project(repository)
+    repository.insert_document(
+        "discount_codes",
+        {
+            "id": "dsc_1",
+            "code": "SOLOWEB",
+            "codeNormalized": "SOLOWEB",
+            "discountType": "fixed",
+            "value": 5000,
+            "appliesTo": "website",
+            "active": True,
+            "description": None,
+            "expiresAt": None,
+            "createdAt": "2026-07-01T00:00:00+00:00",
+            "updatedAt": "2026-07-01T00:00:00+00:00",
+        },
+        duplicate_message="duplicate",
+    )
+    service = PaymentService(repository=repository)
+
+    try:
+        service.create_checkout(
+            CreateCheckoutRequest(
+                projectType="invitation",
+                projectId=project["id"],
+                provider="mercadopago",
+                discountCode="SOLOWEB",
+            )
+        )
+        raise AssertionError("Expected create_checkout to reject the discount code")
+    except Exception as exc:
+        assert getattr(exc, "code", None) == "DISCOUNT_CODE_NOT_APPLICABLE"
+
+
 def test_approved_webhook_uses_checkout_base_url_for_public_website_url() -> None:
     repository = InMemoryDomainRepository()
     project = _create_customer_project(repository)

@@ -88,6 +88,11 @@ def default_payment() -> dict:
         "provider": None,
         "providerPaymentId": None,
         "amount": None,
+        "subtotalAmount": None,
+        "discountAmount": 0,
+        "discountCode": None,
+        "discountType": None,
+        "discountValue": None,
         "currency": None,
         "paidAt": None,
     }

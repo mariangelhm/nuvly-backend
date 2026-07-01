@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from typing import Any, Dict
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from app.core.config import get_settings
 from app.core.errors import NuvlyError
 from app.core.utils import new_id, utc_now_iso
+from app.modules.discounts.service import DiscountCodeService
 from app.modules.domain.defaults import default_payment
 from app.modules.domain.repository import DomainRepository
 from app.modules.domain.services import (
@@ -41,6 +42,14 @@ PROJECT_CONFIGS: dict[str, PaymentProjectConfig] = {
 class PaymentService:
     def __init__(self, repository=None):
         self.repository = repository or DomainRepository()
+        self.discount_service = DiscountCodeService(repository=self.repository)
+
+    @staticmethod
+    def _is_local_base_url(value: str | None) -> bool:
+        if not value:
+            return False
+        hostname = (urlparse(value).hostname or "").lower()
+        return hostname in {"localhost", "127.0.0.1", "0.0.0.0"}
 
     def _project_service(self, project_type: str) -> CustomerProjectService:
         config = PROJECT_CONFIGS.get(project_type)
@@ -61,12 +70,14 @@ class PaymentService:
 
     def _resolve_frontend_base_url(self, override_base_url: str | None = None) -> str:
         settings = get_settings()
+        if settings.frontend_public_base_url and not self._is_local_base_url(settings.frontend_public_base_url):
+            return settings.frontend_public_base_url.rstrip("/")
+        if override_base_url:
+            return override_base_url.rstrip("/")
         if settings.frontend_public_base_url:
             return settings.frontend_public_base_url.rstrip("/")
         if settings.public_base_url:
             return settings.public_base_url.rstrip("/")
-        if override_base_url:
-            return override_base_url.rstrip("/")
         return "http://localhost:8000"
 
     def _build_checkout_url(self, provider: str, payment_id: str, base_url: str | None = None) -> str:
@@ -90,7 +101,13 @@ class PaymentService:
 
         custom_domain = (payload.customDomain or "").strip() or None
         custom_domain_surcharge = CUSTOM_DOMAIN_SURCHARGE_CLP if payload.withCustomDomain else 0
-        amount = base_amount + custom_domain_surcharge
+        subtotal_amount = base_amount + custom_domain_surcharge
+        discount = None
+        discount_amount = 0
+        if payload.discountCode:
+            discount = self.discount_service.get_valid_code_for_checkout(payload.discountCode, payload.projectType)
+            discount_amount = self.discount_service.calculate_discount_amount(subtotal_amount, discount)
+        amount = max(subtotal_amount - discount_amount, 0)
 
         now = utc_now_iso()
         payment_id = new_id("pay")
@@ -103,6 +120,11 @@ class PaymentService:
             "provider": payload.provider,
             "status": "pending",
             "amount": amount,
+            "subtotalAmount": subtotal_amount,
+            "discountAmount": discount_amount,
+            "discountCode": discount.get("code") if discount else None,
+            "discountType": discount.get("discountType") if discount else None,
+            "discountValue": discount.get("value") if discount else None,
             "currency": "CLP",
             "checkoutUrl": checkout_url,
             "checkoutBaseUrl": self._resolve_frontend_base_url(base_url),
@@ -121,6 +143,11 @@ class PaymentService:
                 "status": "pending",
                 "provider": payload.provider,
                 "amount": amount,
+                "subtotalAmount": subtotal_amount,
+                "discountAmount": discount_amount,
+                "discountCode": discount.get("code") if discount else None,
+                "discountType": discount.get("discountType") if discount else None,
+                "discountValue": discount.get("value") if discount else None,
                 "currency": "CLP",
                 "paidAt": None,
             }
@@ -187,6 +214,9 @@ class PaymentService:
             "projectType": payment.get("projectType"),
             "projectId": payment.get("projectId"),
             "amount": payment.get("amount"),
+            "subtotalAmount": payment.get("subtotalAmount"),
+            "discountAmount": payment.get("discountAmount"),
+            "discountCode": payment.get("discountCode"),
             "currency": payment.get("currency"),
             "finalUrl": final_url,
             "websiteUrl": payment.get("websiteUrl"),
@@ -242,6 +272,11 @@ class PaymentService:
         payment_info["provider"] = provider
         payment_info["providerPaymentId"] = payload.providerPaymentId
         payment_info["amount"] = updated_payment.get("amount")
+        payment_info["subtotalAmount"] = updated_payment.get("subtotalAmount")
+        payment_info["discountAmount"] = updated_payment.get("discountAmount")
+        payment_info["discountCode"] = updated_payment.get("discountCode")
+        payment_info["discountType"] = updated_payment.get("discountType")
+        payment_info["discountValue"] = updated_payment.get("discountValue")
         payment_info["currency"] = updated_payment.get("currency")
         public_website_url: str | None = None
         public_invitation_url: str | None = None

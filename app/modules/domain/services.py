@@ -393,6 +393,15 @@ class TemplateService:
             raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
         return document
 
+    @staticmethod
+    def _ensure_not_published_for_deprecation(document: Dict[str, Any]) -> None:
+        if document.get("templateStatus") == "published":
+            raise NuvlyError(
+                "No se puede deprecar un template publicado. Primero debes despublicarlo.",
+                409,
+                "PUBLISHED_TEMPLATE_CANNOT_BE_DEPRECATED",
+            )
+
     def _resolve_plan_base_price(self, product_type: ProductType, plan_tier: PlanTier) -> float:
         pricing_plan_service = PricingPlanService(repository=self.repository)  # type: ignore[arg-type]
         try:
@@ -472,6 +481,8 @@ class TemplateService:
             skip_fields.add("blocks")
         if "blocks" in merged:
             skip_fields.add("pages")
+        if "pages" not in merged and "blocks" in merged and not merged.get("blocks"):
+            merged["pages"] = deepcopy(current.get("pages", []))
         for field in COMMON_EXPERIENCE_FIELDS | {self.config.data_field}:
             if field in skip_fields:
                 continue
@@ -546,6 +557,8 @@ class TemplateService:
         current = self._get_template_document(template_id)
         if current["templateStatus"] == template_status:
             return self._prepare_template_response(current, base_url=base_url)
+        if template_status == "deprecated":
+            self._ensure_not_published_for_deprecation(current)
         current["templateStatus"] = template_status
         current["updatedAt"] = utc_now_iso()
         append_status_history(current, "templateStatus", changed_by, reason)
@@ -770,6 +783,8 @@ class CustomerProjectService:
             skip_fields.add("blocks")
         if "blocks" in merged:
             skip_fields.add("pages")
+        if "pages" not in merged and "blocks" in merged and not merged.get("blocks"):
+            merged["pages"] = deepcopy(current.get("pages", []))
         customer_specific_fields = {
             self.config.data_field,
             "customerData",
@@ -796,7 +811,7 @@ class CustomerProjectService:
             raise NuvlyError(self.config.not_found_message, 404, self.config.not_found_code)
         return document
 
-    def create_from_template(self, payload, base_url: str | None = None) -> Dict[str, Any]:
+    def create_from_template(self, payload, base_url: str | None = None, current_user: Dict[str, Any] | None = None) -> Dict[str, Any]:
         template = self.repository.find_document(
             self.config.template_config.collection,
             {"id": payload.templateId, "templateStatus": "published"},
@@ -821,8 +836,14 @@ class CustomerProjectService:
             "pages": deepcopy(base_snapshot.get("pages")),
             "seo": deepcopy(base_snapshot.get("seo", {})),
             "metadata": deepcopy(base_snapshot.get("metadata", {})),
+            "ownerId": current_user.get("id") if current_user else None,
+            "ownerEmail": current_user.get("email") if current_user else (payload.customerData.email or None),
             "templateId": template["id"],
             "templateSnapshotId": template_snapshot["id"],
+            "selectionSource": payload.selectionSource,
+            "selectedAt": payload.selectedAt or now,
+            "externalAuthProvider": payload.externalAuthProvider,
+            "externalAuthSubject": payload.externalAuthSubject,
             "selectedComponentExtras": deepcopy(base_snapshot.get("selectedComponentExtras", [])),
             "customerData": payload.customerData.model_dump(mode="json"),
             "customerStatus": "draft",
@@ -895,8 +916,92 @@ class CustomerProjectService:
 
         self._ensure_public_slug_available(public_slug, current_id=document.get("id"))
 
+    @staticmethod
+    def _build_owner_filters(owner_id: str | None = None, owner_email: str | None = None) -> Dict[str, Any]:
+        clauses: List[Dict[str, Any]] = []
+        if owner_id:
+            clauses.append({"ownerId": owner_id})
+        if owner_email:
+            clauses.append({"ownerEmail": owner_email})
+        if not clauses:
+            return {}
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"$or": clauses}
+
+    def list_by_owner(
+        self,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+        *,
+        limit: int = 50,
+        skip: int = 0,
+        base_url: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        filters = self._build_owner_filters(owner_id=owner_id, owner_email=owner_email)
+        if not filters:
+            return []
+        documents = self.repository.find_documents(self.config.collection, filters, limit=limit, skip=skip)
+        return [self._prepare_customer_response(document, base_url=base_url) for document in documents]
+
+    @staticmethod
+    def _owner_matches(document: Dict[str, Any], owner_id: str | None = None, owner_email: str | None = None) -> bool:
+        if owner_id and document.get("ownerId") == owner_id:
+            return True
+        if owner_email and document.get("ownerEmail") == owner_email:
+            return True
+        return False
+
+    def _get_project_document_for_owner(
+        self,
+        project_id: str,
+        *,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+    ) -> Dict[str, Any]:
+        document = self._get_project_document(project_id)
+        if not self._owner_matches(document, owner_id=owner_id, owner_email=owner_email):
+            raise NuvlyError("No tienes permisos para acceder a este recurso.", 403, "CUSTOMER_PROJECT_FORBIDDEN")
+        return document
+
+    @staticmethod
+    def to_product_summary(document: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": document["id"],
+            "title": document["title"],
+            "productType": document["productType"],
+            "planTier": document["planTier"],
+            "templateCategory": document["templateCategory"],
+            "customerStatus": document["customerStatus"],
+            "publicSlug": document.get("publicSlug"),
+            "ownerId": document.get("ownerId"),
+            "ownerEmail": document.get("ownerEmail"),
+            "templateId": document["templateId"],
+            "templateSnapshotId": document["templateSnapshotId"],
+            "selectionSource": document.get("selectionSource", "catalog"),
+            "selectedAt": document["selectedAt"],
+            "payment": deepcopy(document.get("payment", default_payment())),
+            "metadata": deepcopy(document.get("metadata", {})),
+            "createdAt": document["createdAt"],
+            "updatedAt": document["updatedAt"],
+            "lastPublishedAt": document.get("lastPublishedAt"),
+        }
+
     def get(self, project_id: str, base_url: str | None = None) -> Dict[str, Any]:
         return self._prepare_customer_response(self._get_project_document(project_id), base_url=base_url)
+
+    def get_for_owner(
+        self,
+        project_id: str,
+        *,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+        base_url: str | None = None,
+    ) -> Dict[str, Any]:
+        return self._prepare_customer_response(
+            self._get_project_document_for_owner(project_id, owner_id=owner_id, owner_email=owner_email),
+            base_url=base_url,
+        )
 
     def update(self, project_id: str, payload, base_url: str | None = None) -> Dict[str, Any]:
         current = self._get_project_document(project_id)
@@ -918,8 +1023,14 @@ class CustomerProjectService:
         document.update(
             {
                 "id": current["id"],
+                "ownerId": current.get("ownerId"),
+                "ownerEmail": current.get("ownerEmail"),
                 "templateId": current["templateId"],
                 "templateSnapshotId": current["templateSnapshotId"],
+                "selectionSource": current.get("selectionSource", "catalog"),
+                "selectedAt": current.get("selectedAt", current["createdAt"]),
+                "externalAuthProvider": current.get("externalAuthProvider"),
+                "externalAuthSubject": current.get("externalAuthSubject"),
                 "productType": normalize_product_type(current.get("productType"), default="invitation" if self.config.entity_kind == "invitation" else "website"),
                 "planTier": normalize_plan_tier(current.get("planTier"), default=DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE[current.get("productType", "website")]),
                 "templateCategory": normalize_template_category(
@@ -949,6 +1060,18 @@ class CustomerProjectService:
         )
         return _decorate_public_media(stored, base_url=base_url)
 
+    def update_for_owner(
+        self,
+        project_id: str,
+        payload,
+        *,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+        base_url: str | None = None,
+    ) -> Dict[str, Any]:
+        self._get_project_document_for_owner(project_id, owner_id=owner_id, owner_email=owner_email)
+        return self.update(project_id, payload, base_url=base_url)
+
     def update_status(self, project_id: str, customer_status: str, changed_by: Optional[str], reason: Optional[str], base_url: str | None = None) -> Dict[str, Any]:
         if customer_status == "published":
             self.publish(project_id, changed_by=changed_by, reason=reason, base_url=base_url)
@@ -973,6 +1096,20 @@ class CustomerProjectService:
             self.config.duplicate_message,
         )
         return self._prepare_customer_response(stored, base_url=base_url)
+
+    def update_status_for_owner(
+        self,
+        project_id: str,
+        customer_status: str,
+        changed_by: Optional[str],
+        reason: Optional[str],
+        *,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+        base_url: str | None = None,
+    ) -> Dict[str, Any]:
+        self._get_project_document_for_owner(project_id, owner_id=owner_id, owner_email=owner_email)
+        return self.update_status(project_id, customer_status, changed_by, reason, base_url=base_url)
 
     def publish(
         self,
@@ -1025,6 +1162,26 @@ class CustomerProjectService:
         logger.info("Customer project published | collection=%s id=%s snapshot=%s version=%s", self.config.collection, project_id, snapshot["id"], version)
         return _decorate_public_media(snapshot, base_url=base_url)
 
+    def publish_for_owner(
+        self,
+        project_id: str,
+        *,
+        owner_id: str | None = None,
+        owner_email: str | None = None,
+        changed_by: Optional[str] = None,
+        reason: Optional[str] = None,
+        base_url: str | None = None,
+        publish_request: PublishRequest | None = None,
+    ) -> Dict[str, Any]:
+        self._get_project_document_for_owner(project_id, owner_id=owner_id, owner_email=owner_email)
+        return self.publish(
+            project_id,
+            changed_by=changed_by,
+            reason=reason,
+            base_url=base_url,
+            publish_request=publish_request,
+        )
+
     def get_published_by_slug(self, slug: str, base_url: str | None = None) -> Dict[str, Any]:
         normalized_slug = self._normalize_public_slug(slugify(slug), None)
         if not normalized_slug:
@@ -1045,6 +1202,8 @@ class CustomerProjectService:
     def _build_snapshot_payload(self, document: Dict[str, Any], version: int, now: str) -> Dict[str, Any]:
         payload = {
             "id": document["id"],
+            "ownerId": document.get("ownerId"),
+            "ownerEmail": document.get("ownerEmail"),
             "title": document["title"],
             "slug": document["slug"],
             "publicSlug": document.get("publicSlug"),
@@ -1060,6 +1219,10 @@ class CustomerProjectService:
             "metadata": deepcopy(document.get("metadata", {})),
             "templateId": document["templateId"],
             "templateSnapshotId": document["templateSnapshotId"],
+            "selectionSource": document.get("selectionSource", "catalog"),
+            "selectedAt": document.get("selectedAt", document["createdAt"]),
+            "externalAuthProvider": document.get("externalAuthProvider"),
+            "externalAuthSubject": document.get("externalAuthSubject"),
             "customerData": deepcopy(document.get("customerData", default_customer_data())),
             "payment": deepcopy(document.get("payment", default_payment())),
             "selectedComponentExtras": deepcopy(document.get("selectedComponentExtras", [])),
