@@ -290,3 +290,89 @@ def test_list_discount_codes_from_studio(monkeypatch) -> None:
 
     assert len(response) == 1
     assert response[0]["code"] == "FIX5000"
+
+
+def test_admin_can_update_discount_code_from_studio(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+    from app.modules.discounts.schemas import AdminDiscountCodeUpdateRequest
+
+    monkeypatch.setattr(
+        studio_routes,
+        "discount_code_service",
+        type(
+            "StubDiscountCodeService",
+            (),
+            {
+                "update_code": staticmethod(
+                    lambda discount_code_id, payload: {
+                        "id": discount_code_id,
+                        "code": payload.code,
+                        "discountType": payload.discountType,
+                        "value": payload.value,
+                        "appliesTo": payload.appliesTo,
+                        "active": payload.active,
+                        "description": payload.description,
+                        "expiresAt": payload.expiresAt,
+                        "createdAt": "2026-07-01T00:00:00+00:00",
+                        "updatedAt": "2026-07-02T00:00:00+00:00",
+                    }
+                )
+            },
+        )(),
+    )
+
+    response = studio_routes.update_discount_code(
+        "dsc_1",
+        AdminDiscountCodeUpdateRequest(
+            code="nuvly15",
+            discountType="percentage",
+            value=15,
+            appliesTo="website",
+            active=True,
+            description="Campaña editada",
+        ),
+        current_user={"id": "usr_admin", "internalRole": "admin", "accountType": "internal"},
+    )
+
+    assert response["id"] == "dsc_1"
+    assert response["code"] == "NUVLY15"
+    assert response["value"] == 15
+
+
+def test_admin_can_disable_discount_code_from_studio(monkeypatch) -> None:
+    from app.modules.domain import studio_routes
+    from app.modules.discounts.schemas import AdminDiscountCodeActiveUpdate
+
+    monkeypatch.setattr(
+        studio_routes,
+        "discount_code_service",
+        type(
+            "StubDiscountCodeService",
+            (),
+            {
+                "update_code_active": staticmethod(
+                    lambda discount_code_id, active: {
+                        "id": discount_code_id,
+                        "code": "NUVLY15",
+                        "discountType": "percentage",
+                        "value": 15,
+                        "appliesTo": "website",
+                        "active": active,
+                        "description": "Campaña editada",
+                        "expiresAt": None,
+                        "createdAt": "2026-07-01T00:00:00+00:00",
+                        "updatedAt": "2026-07-02T00:00:00+00:00",
+                    }
+                )
+            },
+        )(),
+    )
+
+    response = studio_routes.update_discount_code_active(
+        "dsc_1",
+        AdminDiscountCodeActiveUpdate(active=False),
+        current_user={"id": "usr_admin", "internalRole": "admin", "accountType": "internal"},
+    )
+
+    assert response["id"] == "dsc_1"
+    assert response["active"] is False

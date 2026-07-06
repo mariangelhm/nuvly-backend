@@ -36,6 +36,14 @@ class AdminDiscountCodeCreateRequest(BaseModel):
         return value
 
 
+class AdminDiscountCodeUpdateRequest(AdminDiscountCodeCreateRequest):
+    pass
+
+
+class AdminDiscountCodeActiveUpdate(BaseModel):
+    active: bool
+
+
 class AdminDiscountCodeResponse(BaseModel):
     id: str
     code: str

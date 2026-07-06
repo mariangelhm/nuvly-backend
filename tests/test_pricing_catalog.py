@@ -361,6 +361,10 @@ def test_catalog_components_includes_modern_navigation_premium_variants() -> Non
             "Menú orgánico con inicio de sesión",
             "Navegación premium orgánica con acceso de usuario.",
         ),
+        "MP4-Musicians-Right-Drawer": (
+            "Menú plus lateral derecho",
+            "Navegación premium para músicos con menú fijo a la derecha y drawer lateral derecho en mobile.",
+        ),
     }
 
     for variant_code, (name, description) in expected.items():
@@ -386,7 +390,7 @@ def test_catalog_components_includes_modern_website_template_variants() -> None:
     components_by_code = {component["componentCode"]: component for component in response["components"]}
 
     expected_variants = {
-        "navigation": ["ME1-Overlay-Nav", "ME2-Split-Nav", "ME3-Minimal-Sticky", "MA1-Kinetic-Typography-Reveal", "MA2-Neomorphic-Inverted", "MA3-Distorted-Mesh-Gradient", "MP1-Organic-Premium-Frame", "MP2-Breadcrumb-Multipage", "MP3-Organic-Login"],
+        "navigation": ["ME1-Overlay-Nav", "ME2-Split-Nav", "ME3-Minimal-Sticky", "MA1-Kinetic-Typography-Reveal", "MA2-Neomorphic-Inverted", "MA3-Distorted-Mesh-Gradient", "MP1-Organic-Premium-Frame", "MP2-Breadcrumb-Multipage", "MP3-Organic-Login", "MP4-Musicians-Right-Drawer"],
         "hero": ["HE1-Modern-Impact", "HE2-Split-Screen", "HE3-Parallax-Layered", "HA1-Multi-Layer-Kinetic-Parallax", "HA2-Zoom-On-Scroll-Reveal", "HA3-Immersion-Typography-Tunnel", "HP1-Editorial-Video-Upload", "HP2-Editorial-Video-Youtube", "HP3-Cinematic-Image-Frame"],
         "services": ["SE1-Glass-Card", "SE2-Blueprint-Style", "SE3-Number-Focus", "SA1-Neomorphic-Hover-Depth", "SA2-Kinetic-Icon-Animation", "SA3-Floating-3D-Layers", "SA4-Bento-Kinetic-Stack", "SP1-Dynamic-Path-Cards", "SP2-Premium-Circle-Link-Canvas"],
         "leadForm": ["LFP1-Multi-Step", "LFP2-Map-Lead", "LFP3-Conversational", "LFP4-Gamified-Cost-Calculator", "LFP5-Step-by-Step-Modal-Reveal"],
@@ -753,3 +757,22 @@ def test_pricing_calculate_sums_plan_and_general_extras() -> None:
     assert response["componentExtrasTotal"] == 0
     assert response["extrasTotal"] == 1990
     assert response["total"] == response["basePrice"] + 1990
+
+
+def test_admin_pricing_discounts_route_is_registered_in_openapi() -> None:
+    from app import main as main_module
+
+    paths = main_module.app.openapi()["paths"]
+
+    assert "/api/admin/pricing/discounts" in paths
+
+
+def test_admin_discount_management_routes_are_registered_in_openapi() -> None:
+    from app import main as main_module
+
+    paths = main_module.app.openapi()["paths"]
+
+    assert "/api/admin/studio/discount-codes" in paths
+    assert "/api/admin/studio/discount-codes/{discount_code_id}" in paths
+    assert "/api/admin/studio/discount-codes/{discount_code_id}/active" in paths
+    assert "/api/payments/preview" in paths

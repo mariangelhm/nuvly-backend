@@ -35,6 +35,12 @@ class DiscountCodeService:
     def list_codes(self) -> list[dict[str, Any]]:
         return self.repository.find_documents(self._collection_name(), {}, limit=0, sort_field="createdAt", sort_direction=-1)
 
+    def get_code(self, discount_code_id: str) -> dict[str, Any]:
+        document = self.repository.find_document(self._collection_name(), {"id": discount_code_id})
+        if not document:
+            raise NuvlyError("Codigo de descuento no encontrado.", 404, "DISCOUNT_CODE_NOT_FOUND")
+        return document
+
     def create_code(self, payload) -> dict[str, Any]:
         now = utc_now_iso()
         expires_at = _parse_iso_datetime(payload.expiresAt).isoformat() if payload.expiresAt else None
@@ -57,6 +63,43 @@ class DiscountCodeService:
             document,
             duplicate_message="Ya existe un codigo de descuento con ese codigo.",
             duplicate_code="DUPLICATED_DISCOUNT_CODE",
+        )
+
+    def update_code(self, discount_code_id: str, payload) -> dict[str, Any]:
+        current = self.get_code(discount_code_id)
+        expires_at = _parse_iso_datetime(payload.expiresAt).isoformat() if payload.expiresAt else None
+        code = self.normalize_code(payload.code)
+        document = {
+            "id": current["id"],
+            "code": code,
+            "codeNormalized": code,
+            "discountType": payload.discountType,
+            "value": payload.value,
+            "appliesTo": payload.appliesTo,
+            "active": payload.active,
+            "description": (payload.description or "").strip() or None,
+            "expiresAt": expires_at,
+            "createdAt": current["createdAt"],
+            "updatedAt": utc_now_iso(),
+        }
+        return self.repository.replace_document(
+            self._collection_name(),
+            discount_code_id,
+            document,
+            "Codigo de descuento no encontrado.",
+            "DISCOUNT_CODE_NOT_FOUND",
+            "Ya existe un codigo de descuento con ese codigo.",
+            "DUPLICATED_DISCOUNT_CODE",
+        )
+
+    def update_code_active(self, discount_code_id: str, active: bool) -> dict[str, Any]:
+        self.get_code(discount_code_id)
+        return self.repository.update_document_fields(
+            self._collection_name(),
+            discount_code_id,
+            {"active": active, "updatedAt": utc_now_iso()},
+            "Codigo de descuento no encontrado.",
+            "DISCOUNT_CODE_NOT_FOUND",
         )
 
     def get_valid_code_for_checkout(self, code: str, project_type: str) -> dict[str, Any]:

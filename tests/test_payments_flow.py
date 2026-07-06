@@ -89,6 +89,23 @@ class InMemoryDomainRepository:
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
         return len([document for document in self.collections.get(collection_name, []) if self._matches(document, filters)])
 
+    def update_document_fields(
+        self,
+        collection_name: str,
+        document_id: str,
+        updates: Dict[str, Any],
+        not_found_message: str,
+        not_found_code: str,
+    ) -> Dict[str, Any]:
+        documents = self.collections.get(collection_name, [])
+        for index, current in enumerate(documents):
+            if current.get("id") == document_id:
+                updated = deepcopy(current)
+                updated.update(deepcopy(updates))
+                documents[index] = updated
+                return deepcopy(updated)
+        raise AssertionError(f"Document not found in test repository: {collection_name}/{document_id}")
+
     @staticmethod
     def _matches(document: Dict[str, Any], filters: Dict[str, Any]) -> bool:
         for key, expected in filters.items():
@@ -279,6 +296,48 @@ def test_create_checkout_applies_percentage_discount_code() -> None:
     assert stored_project is not None
     assert stored_project["payment"]["discountCode"] == "NUVLY10"
     assert stored_project["payment"]["discountAmount"] == 15
+
+
+def test_preview_checkout_applies_discount_code_and_returns_recalculated_total() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    repository.insert_document(
+        "discount_codes",
+        {
+            "id": "dsc_1",
+            "code": "NUVLY10",
+            "codeNormalized": "NUVLY10",
+            "discountType": "percentage",
+            "value": 10,
+            "appliesTo": "website",
+            "active": True,
+            "description": "10% descuento",
+            "expiresAt": None,
+            "createdAt": "2026-07-01T00:00:00+00:00",
+            "updatedAt": "2026-07-01T00:00:00+00:00",
+        },
+        duplicate_message="duplicate",
+    )
+    service = PaymentService(repository=repository)
+
+    preview = service.preview_checkout(
+        type(
+            "CheckoutPreviewPayload",
+            (),
+            {
+                "projectType": "website",
+                "projectId": project["id"],
+                "withCustomDomain": False,
+                "customDomain": None,
+                "discountCode": "nuvly10",
+            },
+        )()
+    )
+
+    assert preview["subtotalAmount"] == 149
+    assert preview["discountAmount"] == 15
+    assert preview["amount"] == 134
+    assert preview["discountCode"] == "NUVLY10"
 
 
 def test_create_checkout_rejects_discount_code_for_wrong_project_type() -> None:

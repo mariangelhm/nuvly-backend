@@ -225,6 +225,14 @@ COMPONENT_SEEDS: List[Dict[str, Any]] = [
             16,
             "Navegación premium orgánica con acceso de usuario.",
         ),
+        _variant(
+            "MP4-Musicians-Right-Drawer",
+            "Menú plus lateral derecho",
+            "premium",
+            "website",
+            17,
+            "Navegación premium para músicos con menú fijo a la derecha y drawer lateral derecho en mobile.",
+        ),
     ], name="Encabezado / Menú"),
     _component("comp_002", "hero", "website", "core", 2, [
         _variant("H1", "Impacto moderno", "core", "website", 1),

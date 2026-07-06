@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.database import get_database
@@ -138,3 +139,21 @@ class DomainRepository:
 
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
         return self.collection(collection_name).count_documents(filters)
+
+    def update_document_fields(
+        self,
+        collection_name: str,
+        document_id: str,
+        updates: Dict[str, Any],
+        not_found_message: str,
+        not_found_code: str,
+    ) -> Dict[str, Any]:
+        result = self.collection(collection_name).find_one_and_update(
+            {"id": document_id},
+            {"$set": updates},
+            projection={"_id": 0},
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            raise NuvlyError(not_found_message, 404, not_found_code)
+        return self._public_document(result)

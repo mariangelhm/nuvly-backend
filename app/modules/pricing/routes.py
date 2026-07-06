@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.modules.auth.dependencies import get_current_internal_user
+from app.modules.auth.dependencies import get_current_admin_user
 
 from app.core.catalog import ProductType, VariantLevel
+from app.modules.discounts.schemas import AdminDiscountCodeResponse
+from app.modules.discounts.service import DiscountCodeService
 from app.modules.pricing.schemas import (
     PlanTier,
     PricingCalculateRequest,
@@ -35,6 +38,7 @@ plan_service = PricingPlanService()
 component_service = PricingComponentService()
 summary_service = PricingSummaryService()
 calculator_service = PricingCalculatorService()
+discount_code_service = DiscountCodeService()
 
 
 @router.get("/plans", response_model=list[PricingPlanResponse])
@@ -122,3 +126,8 @@ def update_pricing_variant(component_id: str, variantCode: str, payload: Pricing
 @admin_router.post("/seed", response_model=PricingSeedStats)
 def seed_pricing_catalog():
     return ensure_pricing_seed()
+
+
+@admin_router.get("/discounts", response_model=list[AdminDiscountCodeResponse])
+def list_pricing_discounts(current_user: dict = Depends(get_current_admin_user)):
+    return discount_code_service.list_codes()

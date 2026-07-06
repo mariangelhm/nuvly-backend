@@ -6,7 +6,15 @@ from typing import Any, Dict
 import app.main as main_module
 import pytest
 from app.core.errors import NuvlyError
-from app.modules.domain.schemas import CustomerProjectCreate, CustomerData, CustomerWebsiteUpdate, PublishRequest, WebsiteTemplateCreate, WebsiteTemplateUpdate
+from app.modules.domain.schemas import (
+    CustomerProjectCreate,
+    CustomerData,
+    CustomerWebsiteResponse,
+    CustomerWebsiteUpdate,
+    PublishRequest,
+    WebsiteTemplateCreate,
+    WebsiteTemplateUpdate,
+)
 from app.modules.domain.services import (
     CUSTOMER_WEBSITE_CONFIG,
     WEBSITE_TEMPLATE_CONFIG,
@@ -677,6 +685,49 @@ def test_template_create_accepts_modern_studio_variant_codes() -> None:
     assert created["pages"][0]["blocks"][3]["variant"] == "LFP5-Step-by-Step-Modal-Reveal"
 
 
+def test_template_create_accepts_musicians_right_drawer_navigation_variant() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload["planTier"] = "pro"
+    payload["templateCategory"] = "portfolio"
+    payload["pages"][0]["blocks"] = [
+        {
+            "id": "blk_navigation",
+            "type": "navigation",
+            "componentCode": "navigation",
+            "variant": "MP4-Musicians-Right-Drawer",
+            "variantCode": "MP4-Musicians-Right-Drawer",
+            "enabled": True,
+            "order": 1,
+            "props": {
+                "menuPosition": "right",
+                "mobileMenuMode": "right-drawer",
+            },
+            "settings": {},
+        },
+        {
+            "id": "blk_hero",
+            "type": "hero",
+            "componentCode": "hero",
+            "variant": "HE1-Modern-Impact",
+            "variantCode": "HE1-Modern-Impact",
+            "enabled": True,
+            "order": 2,
+            "props": {},
+            "settings": {},
+        },
+    ]
+    payload["layout"]["sectionOrder"] = ["blk_navigation", "blk_hero"]
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+
+    assert created["pages"][0]["blocks"][0]["variant"] == "MP4-Musicians-Right-Drawer"
+    assert created["pages"][0]["blocks"][0]["props"]["menuPosition"] == "right"
+    assert created["pages"][0]["blocks"][0]["props"]["mobileMenuMode"] == "right-drawer"
+
+
 def test_template_create_rejects_unknown_variant_as_bad_request() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -961,3 +1012,110 @@ def test_update_customer_project_allows_custom_plan_with_unknown_variant() -> No
     assert updated["commercialValidationSkipped"] is True
     assert updated["pages"][0]["blocks"][0]["type"] == "dashboard"
     assert updated["pages"][0]["blocks"][0]["customVariant"] is True
+
+
+def test_update_customer_website_preserves_custom_design_payloads_for_custom_sites() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+
+    payload = _website_payload()
+    payload["title"] = "Nails Studio"
+    payload["slug"] = "nails-studio-template"
+    payload["planTier"] = "custom"
+    payload["templateCategory"] = "beauty"
+    payload["styles"] = {
+        "themeId": "nails-studio",
+        "colors": {"accent": "#e88cae"},
+        "effects": {"glass": {"blur": 24}, "cardShadow": "0 24px 60px rgba(120, 47, 86, 0.18)"},
+    }
+    payload["layout"] = {
+        "sectionOrder": ["blk_hero"],
+        "canvas": {"maxWidth": 1320, "gutter": 28},
+    }
+    payload["seo"] = {
+        "title": "Nails Studio",
+        "description": "Custom studio website",
+        "noIndex": False,
+        "openGraph": {"image": "/assets/nails/cover.png"},
+    }
+    payload["metadata"] = {
+        "category": "landing",
+        "coverImage": "/assets/nails/cover.png",
+        "tags": ["beauty"],
+        "previewVariant": "desktop",
+        "previewStyle": {"frame": "browser", "accent": "#e88cae"},
+        "customFlag": "nails-custom",
+    }
+    payload["websiteData"] = {
+        "businessName": "Nails Studio",
+        "industry": "beauty",
+        "contactEmail": "hello@nails.test",
+        "booking": {"provider": "fresha", "url": "https://booking.nails.test"},
+    }
+
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
+    template_service.publish(created["id"])
+    project = customer_service.create_from_template(
+        CustomerProjectCreate(
+            templateId=created["id"],
+            customerData=CustomerData(name="Lara", email="lara@test.dev", phone="123"),
+        )
+    )
+
+    updated = customer_service.update(
+        project["id"],
+        CustomerWebsiteUpdate.model_validate(
+            {
+                "title": "Nails Studio",
+                "slug": project["slug"],
+                "publicSlug": "nails-studio",
+                "planTier": "custom",
+                "templateCategory": "beauty",
+                "styles": {
+                    **project["styles"],
+                    "effects": {
+                        **project["styles"]["effects"],
+                        "buttonGlow": "0 0 0 1px rgba(232,140,174,0.4)",
+                    },
+                },
+                "layout": {
+                    **project["layout"],
+                    "canvas": {"maxWidth": 1440, "gutter": 32},
+                },
+                "pages": project["pages"],
+                "seo": {
+                    **project["seo"],
+                    "openGraph": {"image": "/assets/nails/social-share.png"},
+                },
+                "metadata": {
+                    **project["metadata"],
+                    "previewStyle": {"frame": "browser", "accent": "#f4b6cc"},
+                    "customFlag": "nails-studio-live",
+                },
+                "websiteData": {
+                    **project["websiteData"],
+                    "booking": {"provider": "booksy", "url": "https://book.nails.test"},
+                },
+                "customerData": {
+                    **project["customerData"],
+                    "preferences": {"language": "es-CL"},
+                },
+                "leadForms": project["leadForms"],
+                "formSubmissions": project["formSubmissions"],
+                "customDomain": project["customDomain"],
+            }
+        ),
+    )
+
+    response = CustomerWebsiteResponse.model_validate(updated).model_dump(mode="json")
+
+    assert response["styles"]["effects"]["glass"]["blur"] == 24
+    assert response["styles"]["effects"]["buttonGlow"] == "0 0 0 1px rgba(232,140,174,0.4)"
+    assert response["layout"]["canvas"]["maxWidth"] == 1440
+    assert response["seo"]["openGraph"]["image"] == "/assets/nails/social-share.png"
+    assert response["metadata"]["previewStyle"]["accent"] == "#f4b6cc"
+    assert response["metadata"]["customFlag"] == "nails-studio-live"
+    assert response["websiteData"]["booking"]["provider"] == "booksy"
+    assert response["customerData"]["preferences"]["language"] == "es-CL"

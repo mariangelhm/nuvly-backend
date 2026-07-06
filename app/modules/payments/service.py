@@ -88,7 +88,7 @@ class PaymentService:
         effective_base_url = self._resolve_frontend_base_url(base_url)
         return f"{effective_base_url}/{quote(project_id)}/{quote(public_slug)}"
 
-    def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
+    def _build_checkout_pricing(self, payload) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
         project_service._validate_ready_for_pending_payment(project)
@@ -108,6 +108,47 @@ class PaymentService:
             discount = self.discount_service.get_valid_code_for_checkout(payload.discountCode, payload.projectType)
             discount_amount = self.discount_service.calculate_discount_amount(subtotal_amount, discount)
         amount = max(subtotal_amount - discount_amount, 0)
+
+        return {
+            "project": project,
+            "project_service": project_service,
+            "customDomain": custom_domain,
+            "customDomainSurcharge": custom_domain_surcharge,
+            "subtotalAmount": subtotal_amount,
+            "discount": discount,
+            "discountAmount": discount_amount,
+            "amount": amount,
+        }
+
+    def preview_checkout(self, payload) -> Dict[str, Any]:
+        pricing = self._build_checkout_pricing(payload)
+        discount = pricing["discount"]
+        return {
+            "projectType": payload.projectType,
+            "projectId": payload.projectId,
+            "amount": pricing["amount"],
+            "subtotalAmount": pricing["subtotalAmount"],
+            "discountAmount": pricing["discountAmount"],
+            "discountCode": discount.get("code") if discount else None,
+            "discountType": discount.get("discountType") if discount else None,
+            "discountValue": discount.get("value") if discount else None,
+            "currency": "CLP",
+            "withCustomDomain": payload.withCustomDomain,
+            "customDomain": pricing["customDomain"],
+            "customDomainSurcharge": pricing["customDomainSurcharge"],
+            "domainOptionExplanation": CUSTOM_DOMAIN_EXPLANATION if payload.projectType == "website" else None,
+        }
+
+    def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
+        pricing = self._build_checkout_pricing(payload)
+        project_service = pricing["project_service"]
+        project = pricing["project"]
+        custom_domain = pricing["customDomain"]
+        custom_domain_surcharge = pricing["customDomainSurcharge"]
+        subtotal_amount = pricing["subtotalAmount"]
+        discount = pricing["discount"]
+        discount_amount = pricing["discountAmount"]
+        amount = pricing["amount"]
 
         now = utc_now_iso()
         payment_id = new_id("pay")

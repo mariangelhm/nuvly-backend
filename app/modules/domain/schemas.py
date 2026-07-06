@@ -301,14 +301,14 @@ class CustomerWebsiteUpdate(BaseModel):
     productType: ProductType = "website"
     planTier: PlanTier = "plus"
     templateCategory: TemplateCategoryCode = "corporate"
-    styles: Optional[Styles] = None
-    layout: Optional[Layout] = None
+    styles: Optional[Dict[str, Any]] = None
+    layout: Optional[Dict[str, Any]] = None
     blocks: Optional[List[ExperienceBlock]] = None
     pages: Optional[List[ExperiencePage]] = None
-    seo: Optional[Seo] = None
-    metadata: Optional[Metadata] = None
-    websiteData: Optional[WebsiteData] = None
-    customerData: Optional[CustomerData] = None
+    seo: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    websiteData: Optional[Dict[str, Any]] = None
+    customerData: Optional[Dict[str, Any]] = None
     selectedComponentExtras: Optional[List[SelectedComponentExtra]] = None
     commercialValidationSkipped: Optional[bool] = None
     leadForms: Optional[List[Dict[str, Any]]] = None
@@ -354,7 +354,7 @@ class CustomerWebsiteResponse(CustomerWebsiteUpdate):
     lastPublishedAt: Optional[str] = None
     createdAt: str
     updatedAt: str
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, extra="allow")
 
 
 class CustomerProductSummaryResponse(BaseModel):

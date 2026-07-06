@@ -19,6 +19,30 @@ class CreateCheckoutRequest(BaseModel):
     discountCode: Optional[str] = Field(default=None, min_length=1, max_length=32)
 
 
+class CheckoutPreviewRequest(BaseModel):
+    projectType: ProjectType
+    projectId: str = Field(min_length=1)
+    withCustomDomain: bool = False
+    customDomain: Optional[str] = None
+    discountCode: Optional[str] = Field(default=None, min_length=1, max_length=32)
+
+
+class CheckoutPreviewResponse(BaseModel):
+    projectType: ProjectType
+    projectId: str
+    amount: float
+    subtotalAmount: float
+    discountAmount: int = 0
+    discountCode: Optional[str] = None
+    discountType: Optional[str] = None
+    discountValue: Optional[int] = None
+    currency: str
+    withCustomDomain: bool
+    customDomain: Optional[str] = None
+    customDomainSurcharge: int = 0
+    domainOptionExplanation: Optional[str] = None
+
+
 class CreateCheckoutResponse(BaseModel):
     paymentId: str
     projectType: ProjectType

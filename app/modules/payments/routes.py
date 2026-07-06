@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request, status
 
 from app.modules.payments.schemas import (
+    CheckoutPreviewRequest,
+    CheckoutPreviewResponse,
     CreateCheckoutRequest,
     CreateCheckoutResponse,
     ManualPaymentConfirmationResponse,
@@ -12,6 +14,11 @@ from app.modules.payments.service import PaymentService
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 service = PaymentService()
+
+
+@router.post("/preview", response_model=CheckoutPreviewResponse, status_code=status.HTTP_200_OK)
+def preview_checkout(payload: CheckoutPreviewRequest):
+    return service.preview_checkout(payload)
 
 
 @router.post("/create-checkout", response_model=CreateCheckoutResponse, status_code=status.HTTP_200_OK)

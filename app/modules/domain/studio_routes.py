@@ -8,7 +8,12 @@ from app.core.database import get_database
 from app.modules.auth.dependencies import get_current_admin_user, get_current_internal_user
 from app.modules.auth.schemas import AuthUserResponse, InternalUserCreateRequest
 from app.modules.auth.service import AuthService
-from app.modules.discounts.schemas import AdminDiscountCodeCreateRequest, AdminDiscountCodeResponse
+from app.modules.discounts.schemas import (
+    AdminDiscountCodeActiveUpdate,
+    AdminDiscountCodeCreateRequest,
+    AdminDiscountCodeResponse,
+    AdminDiscountCodeUpdateRequest,
+)
 from app.modules.discounts.service import DiscountCodeService
 from app.modules.domain.schemas import (
     InvitationTemplateCreate,
@@ -281,7 +286,7 @@ def create_internal_user(
 
 
 @admin_router.get("/discount-codes", response_model=list[AdminDiscountCodeResponse])
-def list_discount_codes():
+def list_discount_codes(current_user: dict = Depends(get_current_admin_user)):
     return discount_code_service.list_codes()
 
 
@@ -291,3 +296,21 @@ def create_discount_code(
     current_user: dict = Depends(get_current_admin_user),
 ):
     return discount_code_service.create_code(payload)
+
+
+@admin_router.put("/discount-codes/{discount_code_id}", response_model=AdminDiscountCodeResponse)
+def update_discount_code(
+    discount_code_id: str,
+    payload: AdminDiscountCodeUpdateRequest,
+    current_user: dict = Depends(get_current_admin_user),
+):
+    return discount_code_service.update_code(discount_code_id, payload)
+
+
+@admin_router.patch("/discount-codes/{discount_code_id}/active", response_model=AdminDiscountCodeResponse)
+def update_discount_code_active(
+    discount_code_id: str,
+    payload: AdminDiscountCodeActiveUpdate,
+    current_user: dict = Depends(get_current_admin_user),
+):
+    return discount_code_service.update_code_active(discount_code_id, payload.active)
