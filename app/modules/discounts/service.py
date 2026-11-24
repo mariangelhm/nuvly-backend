@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.core.errors import NuvlyError
@@ -33,7 +34,9 @@ class DiscountCodeService:
         return "discount_codes"
 
     def list_codes(self) -> list[dict[str, Any]]:
-        return self.repository.find_documents(self._collection_name(), {}, limit=0, sort_field="createdAt", sort_direction=-1)
+        return self.repository.find_documents(
+            self._collection_name(), {}, limit=0, sort_field="createdAt", sort_direction=-1
+        )
 
     def get_code(self, discount_code_id: str) -> dict[str, Any]:
         document = self.repository.find_document(self._collection_name(), {"id": discount_code_id})
@@ -128,5 +131,18 @@ class DiscountCodeService:
         if subtotal <= 0:
             return 0
         if discount.get("discountType") == "percentage":
-            return max(int(round(subtotal * (discount.get("value", 0) / 100))), 0)
-        return max(min(int(discount.get("value", 0)), int(round(subtotal))), 0)
+            return max(
+                int(
+                    (Decimal(str(subtotal)) * Decimal(str(discount.get("value", 0))) / 100).quantize(
+                        Decimal("1"), rounding=ROUND_HALF_UP
+                    )
+                ),
+                0,
+            )
+        return max(
+            min(
+                int(discount.get("value", 0)),
+                int(Decimal(str(subtotal)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)),
+            ),
+            0,
+        )

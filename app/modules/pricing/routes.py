@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
-from app.modules.auth.dependencies import get_current_internal_user
-from app.modules.auth.dependencies import get_current_admin_user
-
 from app.core.catalog import ProductType, VariantLevel
+from app.modules.auth.dependencies import get_current_admin_user, get_current_internal_user
 from app.modules.discounts.schemas import AdminDiscountCodeResponse
 from app.modules.discounts.service import DiscountCodeService
 from app.modules.pricing.schemas import (
@@ -20,8 +18,8 @@ from app.modules.pricing.schemas import (
     PricingPlanUpdate,
     PricingSeedStats,
     PricingSummaryResponse,
-    PricingVariantUpdate,
     PricingVariantActiveUpdate,
+    PricingVariantUpdate,
 )
 from app.modules.pricing.service import (
     PricingCalculatorService,
@@ -32,7 +30,9 @@ from app.modules.pricing.service import (
 )
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
-admin_router = APIRouter(prefix="/admin/pricing", tags=["admin-pricing"], dependencies=[Depends(get_current_internal_user)])
+admin_router = APIRouter(
+    prefix="/admin/pricing", tags=["admin-pricing"], dependencies=[Depends(get_current_internal_user)]
+)
 
 plan_service = PricingPlanService()
 component_service = PricingComponentService()
@@ -75,7 +75,9 @@ def get_pricing_summary(
     includeInactive: bool = Query(default=False),
     variantLevel: VariantLevel | None = Query(default=None),
 ):
-    return summary_service.build_summary(product_type=productType, include_inactive=includeInactive, variant_level=variantLevel)
+    return summary_service.build_summary(
+        product_type=productType, include_inactive=includeInactive, variant_level=variantLevel
+    )
 
 
 @router.post("/calculate", response_model=PricingCalculateResponse)

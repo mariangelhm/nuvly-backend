@@ -56,5 +56,5 @@ def test_unexpected_error_is_logged(caplog) -> None:
 
     assert response.status_code == 500
     assert "Unhandled exception" in caplog.text
-    assert "broken response" in caplog.text
-
+    assert "RuntimeError" in caplog.text
+    assert "broken response" not in caplog.text

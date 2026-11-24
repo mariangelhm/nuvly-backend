@@ -4,8 +4,13 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.errors import NuvlyError
-from app.modules.domain.schemas import PublishRequest, WebsiteTemplateCreate, WebsiteTemplateResponse, WebsiteTemplateUpdate
-from app.modules.domain.services import TemplateService, WEBSITE_TEMPLATE_CONFIG
+from app.modules.domain.schemas import (
+    PublishRequest,
+    WebsiteTemplateCreate,
+    WebsiteTemplateResponse,
+    WebsiteTemplateUpdate,
+)
+from app.modules.domain.services import WEBSITE_TEMPLATE_CONFIG, TemplateService
 from app.modules.pricing.service import ensure_pricing_seed
 
 
@@ -44,7 +49,11 @@ class InMemoryDomainRepository:
         sort_field: str = "updatedAt",
         sort_direction: int = -1,
     ) -> list[Dict[str, Any]]:
-        documents = [deepcopy(document) for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        documents = [
+            deepcopy(document)
+            for document in self.collections.get(collection_name, [])
+            if self._matches(document, filters)
+        ]
         documents.sort(key=lambda document: _get_nested(document, sort_field), reverse=sort_direction == -1)
         documents = documents[skip:]
         if limit > 0:
@@ -69,16 +78,21 @@ class InMemoryDomainRepository:
         not_found_code: str,
         duplicate_message: str,
         duplicate_code: str = "DUPLICATED_SLUG",
+        expected_updated_at: str | None = None,
     ) -> Dict[str, Any]:
         documents = self.collections.get(collection_name, [])
         for index, current in enumerate(documents):
             if current.get("id") == document_id:
+                if expected_updated_at is not None and current.get("updatedAt") != expected_updated_at:
+                    raise NuvlyError("Concurrent update", 409, "PROJECT_VERSION_CONFLICT")
                 documents[index] = deepcopy(document)
                 return deepcopy(document)
         raise AssertionError(f"Document not found in test repository: {collection_name}/{document_id}")
 
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
-        return len([document for document in self.collections.get(collection_name, []) if self._matches(document, filters)])
+        return len(
+            [document for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        )
 
     @staticmethod
     def _matches(document: Dict[str, Any], filters: Dict[str, Any]) -> bool:
@@ -274,6 +288,55 @@ def test_website_template_contract_preserves_complete_shape() -> None:
     assert "websiteData" not in response
 
 
+def test_website_template_saves_band_story_content_for_standard_plans() -> None:
+    for plan_tier in ("plus", "pro"):
+        repository = InMemoryDomainRepository()
+        ensure_pricing_seed(repository=repository)
+        service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+        block = {
+            "id": "story",
+            "type": "content",
+            "variant": "COA3-Band-Story-Split",
+            "enabled": True,
+            "order": 1,
+            "props": {"title": "Nuestra historia", "body": "Contenido editorial"},
+        }
+        payload = {
+            "title": "Historia editorial",
+            "slug": "historia-editorial",
+            "productType": "website",
+            "planTier": plan_tier,
+            "templateCategory": "beauty",
+            "blocks": [block],
+        }
+
+        created = service.create(WebsiteTemplateCreate.model_validate(payload))
+        first_read = _response_json(service.get(created["id"]))
+        service.update(created["id"], WebsiteTemplateUpdate.model_validate(first_read))
+        saved = _response_json(service.get(created["id"]))
+
+        assert saved["blocks"][0]["variant"] == block["variant"]
+        assert saved["blocks"][0]["props"] == block["props"]
+        assert saved["pages"][0]["blocks"][0]["variant"] == block["variant"]
+        assert saved["selectedComponentExtras"] == []
+
+
+def test_published_template_preserves_renderer_identity_and_content() -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _build_full_website_payload()
+    payload["templateComponent"] = "web-manicura-bienestar"
+    payload["content"] = {"templateComponent": "web-manicura-bienestar", "customText": "Contenido publicado"}
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+    snapshot = service.publish(created["id"])["snapshot"]
+    assert snapshot["templateComponent"] == payload["templateComponent"]
+    assert snapshot["content"] == payload["content"]
+    response = service.get_public_by_slug(created["slug"])["snapshot"]
+    assert response["templateComponent"] == payload["templateComponent"]
+    assert response["content"] == payload["content"]
+
+
 def test_website_template_custom_plan_preserves_manual_base_price_and_does_not_default() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -304,7 +367,17 @@ def test_website_template_plus_plan_without_base_price_defaults_to_plan_base_pri
         "templateCategory": "corporate",
         "styles": {"themeId": "sunrise"},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [
+            {
+                "id": "blk_hero",
+                "type": "hero",
+                "variant": "H1",
+                "enabled": True,
+                "order": 1,
+                "props": {},
+                "settings": {},
+            }
+        ],
         "pages": [
             {
                 "id": "page_home",
@@ -316,7 +389,17 @@ def test_website_template_plus_plan_without_base_price_defaults_to_plan_base_pri
                 "source": {},
                 "seo": {},
                 "settings": {},
-                "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+                "blocks": [
+                    {
+                        "id": "blk_hero",
+                        "type": "hero",
+                        "variant": "H1",
+                        "enabled": True,
+                        "order": 1,
+                        "props": {},
+                        "settings": {},
+                    }
+                ],
             }
         ],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
@@ -324,10 +407,30 @@ def test_website_template_plus_plan_without_base_price_defaults_to_plan_base_pri
     }
     created = service.create(WebsiteTemplateCreate.model_validate(payload))
 
-    assert created["metadata"]["basePrice"] == 19990
+    assert created["metadata"]["basePrice"] == 9990
 
     snapshot = service.publish(created["id"])
-    assert snapshot["snapshot"]["metadata"]["basePrice"] == 19990
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 9990
+
+
+def test_website_template_refreshes_plan_price_without_overwriting_manual_price() -> None:
+    for price_source in ("plan_base", "manual"):
+        repository = InMemoryDomainRepository()
+        ensure_pricing_seed(repository=repository)
+        service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+        payload = {
+            "title": "Precio actualizado",
+            "slug": "precio-actualizado",
+            "productType": "website",
+            "planTier": "pro",
+            "templateCategory": "beauty",
+            "blocks": [{"id": "hero", "type": "hero", "variant": "H1"}],
+            "metadata": {"basePrice": 49990, "basePriceSource": price_source},
+        }
+        created = service.create(WebsiteTemplateCreate.model_validate(payload))
+        saved = service.update(created["id"], WebsiteTemplateUpdate.model_validate(payload))
+        assert saved["metadata"]["basePrice"] == (19990 if price_source == "plan_base" else 49990)
+        assert saved["metadata"]["basePriceSource"] == price_source
 
 
 def test_website_template_custom_plan_without_base_price_defaults_to_plan_base_price() -> None:
@@ -340,10 +443,10 @@ def test_website_template_custom_plan_without_base_price_defaults_to_plan_base_p
     created = service.create(WebsiteTemplateCreate.model_validate(payload))
 
     assert created["planTier"] == "custom"
-    assert created["metadata"]["basePrice"] == 250000
+    assert created["metadata"]["basePrice"] == 399990
 
     snapshot = service.publish(created["id"])
-    assert snapshot["snapshot"]["metadata"]["basePrice"] == 250000
+    assert snapshot["snapshot"]["metadata"]["basePrice"] == 399990
 
 
 def test_website_template_publish_allows_manual_base_price_override() -> None:
@@ -390,16 +493,32 @@ def test_website_template_put_prefers_explicit_root_blocks_when_pages_are_stale(
     first_read = _response_json(service.get(created["id"]))
 
     update_payload = deepcopy(first_read)
-    update_payload["blocks"][2]["props"]["image"] = "http://localhost:8000/static/uploads/website_template/asset_services.png"
-    update_payload["blocks"][2]["props"]["items"][0]["image"] = "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    update_payload["blocks"][2]["props"]["image"] = (
+        "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    )
+    update_payload["blocks"][2]["props"]["items"][0]["image"] = (
+        "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    )
 
     service.update(created["id"], WebsiteTemplateUpdate.model_validate(update_payload))
     second_read = _response_json(service.get(created["id"]))
 
-    assert second_read["blocks"][2]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services.png"
-    assert second_read["pages"][0]["blocks"][2]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services.png"
-    assert second_read["blocks"][2]["props"]["items"][0]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
-    assert second_read["pages"][0]["blocks"][2]["props"]["items"][0]["image"] == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    assert (
+        second_read["blocks"][2]["props"]["image"]
+        == "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    )
+    assert (
+        second_read["pages"][0]["blocks"][2]["props"]["image"]
+        == "http://localhost:8000/static/uploads/website_template/asset_services.png"
+    )
+    assert (
+        second_read["blocks"][2]["props"]["items"][0]["image"]
+        == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    )
+    assert (
+        second_read["pages"][0]["blocks"][2]["props"]["items"][0]["image"]
+        == "http://localhost:8000/static/uploads/website_template/asset_services_item.png"
+    )
 
 
 def test_website_template_put_prefers_pages_when_root_blocks_are_omitted() -> None:
@@ -412,15 +531,28 @@ def test_website_template_put_prefers_pages_when_root_blocks_are_omitted() -> No
 
     update_payload = deepcopy(first_read)
     update_payload.pop("blocks", None)
-    update_payload["pages"][0]["blocks"][0]["props"]["image"] = "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
-    update_payload["pages"][0]["blocks"][0]["props"]["logoImage"] = "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    update_payload["pages"][0]["blocks"][0]["props"]["image"] = (
+        "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
+    )
+    update_payload["pages"][0]["blocks"][0]["props"]["logoImage"] = (
+        "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    )
 
     service.update(created["id"], WebsiteTemplateUpdate.model_validate(update_payload))
     second_read = _response_json(service.get(created["id"]))
 
-    assert second_read["blocks"][0]["props"]["image"] == "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
-    assert second_read["blocks"][0]["props"]["logoImage"] == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
-    assert second_read["pages"][0]["blocks"][0]["props"]["logoImage"] == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    assert (
+        second_read["blocks"][0]["props"]["image"]
+        == "http://localhost:8000/static/uploads/website_template/asset_from_pages.png"
+    )
+    assert (
+        second_read["blocks"][0]["props"]["logoImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    )
+    assert (
+        second_read["pages"][0]["blocks"][0]["props"]["logoImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_logo_from_pages.png"
+    )
 
 
 def test_website_template_put_preserves_existing_pages_when_root_blocks_are_empty() -> None:

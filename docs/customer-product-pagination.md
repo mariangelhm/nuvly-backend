@@ -1,0 +1,11 @@
+# Listado de proyectos del cliente
+
+`GET /api/customer/products?limit=10&skip=20` requiere sesión customer. `limit` (1–200) y `skip` (>=0) se aplican **a cada colección**: conserva la paginación independiente de las pestañas web e invitaciones. `products` combina ambas páginas y puede contener hasta `2 * limit` tarjetas; no representa una página global única. Orden: updatedAt descendente, id ascendente como desempate. Los totales corresponden al conjunto visible de cada producto, incluso cuando la página solicitada está vacía.
+
+`products`, `invitations` y `websites` contienen resúmenes `CustomerProductSummaryResponse`. Para editar se debe consultar `GET /api/customer/{websites|invitations}/{id}`; el listado no transporta bloques, páginas, contenido, invitados, respuestas de formularios ni datos privados de contacto. El dashboard actual usa las rutas de detalle al abrir el editor.
+
+La consulta filtra primero por ownerId, usa orden estable y proyecta campos de tarjeta antes de agrupar. Mongo elimina borradores temporales archivados/vencidos y conserva el más reciente por template; proyectos pagados/publicados mantienen identidad propia. Se conserva un borrador de edad desconocida. No se archivan documentos como efecto secundario del listado; los flujos de creación/recuperación existentes mantienen su limpieza.
+
+Una agregación obtiene página y conteo; solo esas tarjetas llegan a Python. El índice compuesto `(ownerId, updatedAt desc, id asc)` se crea en el arranque habitual, sin ejecutar migraciones aquí. El timeout es 10 segundos. El conteo y deduplicado todavía requieren trabajo proporcional a los proyectos del dueño dentro de Mongo; offsets altos tampoco son gratuitos. No se promete latencia constante. [Límites de facet](https://www.mongodb.com/docs/manual/reference/operator/aggregation/facet/) y [coste de group](https://www.mongodb.com/docs/manual/reference/operator/aggregation/group/).
+
+Verificación local: contratos de consulta, proyección, identidad, límites, totales independientes del tamaño de página y normalización de tarjetas; suite completa 380 pruebas aprobadas. Pendiente: ejecutar la agregación y `explain` contra Mongo de staging con fixtures representativos, medir latencia/tamaño y validar el índice. Los dobles locales de repositorio no certifican el motor de agregación real.

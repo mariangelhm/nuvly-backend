@@ -48,6 +48,17 @@ class RegisterRequest(BaseModel):
         return validate_nuvly_password(value)
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(min_length=1, max_length=16384)
+    challengeToken: str = Field(min_length=24, max_length=128)
+
+
+class GoogleChallengeResponse(BaseModel):
+    clientId: str
+    nonce: str
+    challengeToken: str
+
+
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=8, max_length=128)
@@ -117,6 +128,7 @@ class AuthUserResponse(BaseModel):
 
 
 class AuthSessionResponse(BaseModel):
+    sessionKind: Literal["bearer", "cookie"] = "bearer"
     token: str
     tokenType: str = "bearer"
     expiresAt: str

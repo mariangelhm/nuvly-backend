@@ -3,11 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
+from app.core.catalog import WEBSITE_TEMPLATE_CATEGORIES, normalize_template_category
 from app.core.errors import NuvlyError
 from app.modules.pricing.schemas import (
+    CatalogComponentsResponse,
     PricingCalculateRequest,
-    PricingComponentResponse,
     PricingComponentCreate,
+    PricingComponentResponse,
     PricingComponentUpdate,
     PricingPlanCreate,
     PricingPlanResponse,
@@ -52,11 +54,15 @@ class InMemoryPricingRepository:
                     raise NuvlyError(duplicate_message, 409, duplicate_code)
         elif collection_name == COMPONENTS_COLLECTION:
             for current in self.collections.get(collection_name, []):
-                if current.get("productType") == document.get("productType") and current.get("componentCode") == document.get("componentCode"):
+                if current.get("productType") == document.get("productType") and current.get(
+                    "componentCode"
+                ) == document.get("componentCode"):
                     raise NuvlyError(duplicate_message, 409, duplicate_code)
         elif collection_name == TEMPLATE_CATEGORIES_COLLECTION:
             for current in self.collections.get(collection_name, []):
-                if current.get("productType") == document.get("productType") and current.get("categoryCode") == document.get("categoryCode"):
+                if current.get("productType") == document.get("productType") and current.get(
+                    "categoryCode"
+                ) == document.get("categoryCode"):
                     raise NuvlyError(duplicate_message, 409, duplicate_code)
         self.collections.setdefault(collection_name, []).append(deepcopy(document))
         return deepcopy(document)
@@ -92,7 +98,11 @@ class InMemoryPricingRepository:
         skip: int = 0,
         sort_fields: Optional[List[tuple[str, int]]] = None,
     ) -> List[Dict[str, Any]]:
-        documents = [deepcopy(document) for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        documents = [
+            deepcopy(document)
+            for document in self.collections.get(collection_name, [])
+            if self._matches(document, filters)
+        ]
         if sort_fields:
             for field, direction in reversed(sort_fields):
                 documents.sort(key=lambda item: item.get(field), reverse=direction == -1)
@@ -124,6 +134,26 @@ class InMemoryPricingRepository:
             if document.get(key) != expected:
                 return False
         return True
+
+
+def test_all_website_categories_support_catalog_and_pricing_requests() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    catalog = CatalogService(repository=repository)
+    categories = catalog.list_template_categories("website")
+    assert {category["categoryCode"] for category in categories} == set(WEBSITE_TEMPLATE_CATEGORIES)
+
+    for category in WEBSITE_TEMPLATE_CATEGORIES:
+        assert normalize_template_category(category, "website") == category
+        TemplateCategoryCreate.model_validate(next(item for item in categories if item["categoryCode"] == category))
+        request = PricingCalculateRequest(productType="website", templateCategory=category, planTier="plus")
+        assert request.templateCategory == category
+        for plan in ("plus", "pro", "custom"):
+            response = CatalogComponentsResponse.model_validate(
+                catalog.list_components_for_catalog("website", category, plan)
+            )
+            assert response.templateCategory == category
+            assert response.components
 
 
 def _plan_payload() -> Dict[str, Any]:
@@ -200,10 +230,43 @@ def test_pricing_seed_is_idempotent() -> None:
 
     assert first.insertedPlans == 8
     assert first.insertedComponents > 0
-    assert first.insertedTemplateCategories == 14
+    assert first.insertedTemplateCategories == 21
     assert second.skippedPlans == 8
     assert second.skippedComponents == first.insertedComponents
-    assert second.skippedTemplateCategories == 14
+    assert second.skippedTemplateCategories == 21
+
+
+def test_pricing_seed_exposes_three_active_plans_per_product() -> None:
+    repository = InMemoryPricingRepository()
+    repository.collections[PLANS_COLLECTION] = [
+        {
+            "id": "legacy_essential_custom",
+            "productType": "website",
+            "tier": "essential",
+            "name": "Legacy Essential",
+        }
+    ]
+    ensure_pricing_seed(repository=repository)
+    service = PricingPlanService(repository=repository)
+
+    website_plans = service.list(product_type="website", active=True)
+    invitation_plans = service.list(product_type="invitation", active=True)
+    retired_website_plan = service.get("plan_001")
+    retired_invitation_plan = service.get("plan_005")
+
+    assert [(plan["name"], plan["basePrice"]) for plan in website_plans] == [
+        ("Básico", 9990),
+        ("Avanzadas", 19990),
+        ("Personalizadas", 399990),
+    ]
+    assert [(plan["name"], plan["basePrice"]) for plan in invitation_plans] == [
+        ("Básico", 2990),
+        ("Avanzadas", 19990),
+        ("Personalizadas", 80000),
+    ]
+    assert retired_website_plan["active"] is False
+    assert retired_invitation_plan["active"] is False
+    assert service.get("legacy_essential_custom")["active"] is False
 
 
 def test_pricing_plan_crud_and_active_toggle() -> None:
@@ -211,7 +274,9 @@ def test_pricing_plan_crud_and_active_toggle() -> None:
     service = PricingPlanService(repository=repository)
 
     created = service.create(PricingPlanCreate.model_validate(_plan_payload()))
-    updated = service.update(created["id"], PricingPlanUpdate.model_validate({**_plan_payload(), "name": "Growth Updated"}))
+    updated = service.update(
+        created["id"], PricingPlanUpdate.model_validate({**_plan_payload(), "name": "Growth Updated"})
+    )
     disabled = service.update_active(created["id"], False)
 
     assert created["code"] == "website_growth"
@@ -224,7 +289,10 @@ def test_template_category_crud_and_active_toggle() -> None:
     service = TemplateCategoryService(repository=repository)
 
     created = service.create(TemplateCategoryCreate.model_validate(_template_category_payload()))
-    updated = service.update(created["id"], TemplateCategoryCreate.model_validate({**_template_category_payload(), "name": "Construcción Pro"}))
+    updated = service.update(
+        created["id"],
+        TemplateCategoryCreate.model_validate({**_template_category_payload(), "name": "Construcción Pro"}),
+    )
     disabled = service.update_active(created["id"], False)
 
     assert created["categoryCode"] == "construction"
@@ -237,7 +305,9 @@ def test_pricing_component_crud_and_variant_active_toggle() -> None:
     service = PricingComponentService(repository=repository)
 
     created = service.create(PricingComponentCreate.model_validate(_component_payload()))
-    updated = service.update(created["id"], PricingComponentUpdate.model_validate({**_component_payload(), "name": "Hero Updated"}))
+    updated = service.update(
+        created["id"], PricingComponentUpdate.model_validate({**_component_payload(), "name": "Hero Updated"})
+    )
     variant_disabled = service.update_variant_active(created["id"], "H8", False)
 
     assert created["componentCode"] == "hero"
@@ -390,16 +460,87 @@ def test_catalog_components_includes_modern_website_template_variants() -> None:
     components_by_code = {component["componentCode"]: component for component in response["components"]}
 
     expected_variants = {
-        "navigation": ["ME1-Overlay-Nav", "ME2-Split-Nav", "ME3-Minimal-Sticky", "MA1-Kinetic-Typography-Reveal", "MA2-Neomorphic-Inverted", "MA3-Distorted-Mesh-Gradient", "MP1-Organic-Premium-Frame", "MP2-Breadcrumb-Multipage", "MP3-Organic-Login", "MP4-Musicians-Right-Drawer"],
-        "hero": ["HE1-Modern-Impact", "HE2-Split-Screen", "HE3-Parallax-Layered", "HA1-Multi-Layer-Kinetic-Parallax", "HA2-Zoom-On-Scroll-Reveal", "HA3-Immersion-Typography-Tunnel", "HP1-Editorial-Video-Upload", "HP2-Editorial-Video-Youtube", "HP3-Cinematic-Image-Frame"],
-        "services": ["SE1-Glass-Card", "SE2-Blueprint-Style", "SE3-Number-Focus", "SA1-Neomorphic-Hover-Depth", "SA2-Kinetic-Icon-Animation", "SA3-Floating-3D-Layers", "SA4-Bento-Kinetic-Stack", "SP1-Dynamic-Path-Cards", "SP2-Premium-Circle-Link-Canvas"],
-        "leadForm": ["LFP1-Multi-Step", "LFP2-Map-Lead", "LFP3-Conversational", "LFP4-Gamified-Cost-Calculator", "LFP5-Step-by-Step-Modal-Reveal"],
-        "content": ["COE1-Focus-Reveal", "COA1-Data-Wall", "COA2-Interactive-Blueprint-Glossary"],
-        "projects": ["PE1-Masonry-Grid", "PE2-Parallax-Tiles-Reveal", "PE3-Interactive-Tabs", "PA1-Infinite-Draggable-Grid", "PA2-Full-Width-Slider", "PA3-Liquid-Distortion-Hover", "PP1-Smart-Sync-Reader"],
-        "beforeAfter": ["BAE1-Slider-Classic", "BAE2-Fade-Interaction", "BAE3-Diagonal-Split", "BAA1-Lens-Magnifier-Effect", "BAA2-3D-Card-Flip", "BAP1-Curtain-Reveal-Parallax"],
+        "navigation": [
+            "ME1-Overlay-Nav",
+            "ME2-Split-Nav",
+            "ME3-Minimal-Sticky",
+            "MA1-Kinetic-Typography-Reveal",
+            "MA2-Neomorphic-Inverted",
+            "MA3-Distorted-Mesh-Gradient",
+            "MP1-Organic-Premium-Frame",
+            "MP2-Breadcrumb-Multipage",
+            "MP3-Organic-Login",
+            "MP4-Musicians-Right-Drawer",
+        ],
+        "hero": [
+            "HE1-Modern-Impact",
+            "HE2-Split-Screen",
+            "HE3-Parallax-Layered",
+            "HA1-Multi-Layer-Kinetic-Parallax",
+            "HA2-Zoom-On-Scroll-Reveal",
+            "HA3-Immersion-Typography-Tunnel",
+            "HP1-Editorial-Video-Upload",
+            "HP2-Editorial-Video-Youtube",
+            "HP3-Cinematic-Image-Frame",
+        ],
+        "services": [
+            "SE1-Glass-Card",
+            "SE2-Blueprint-Style",
+            "SE3-Number-Focus",
+            "SA1-Neomorphic-Hover-Depth",
+            "SA2-Kinetic-Icon-Animation",
+            "SA3-Floating-3D-Layers",
+            "SA4-Bento-Kinetic-Stack",
+            "SP1-Dynamic-Path-Cards",
+            "SP2-Premium-Circle-Link-Canvas",
+        ],
+        "leadForm": [
+            "LFP1-Multi-Step",
+            "LFP2-Map-Lead",
+            "LFP3-Conversational",
+            "LFP4-Gamified-Cost-Calculator",
+            "LFP5-Step-by-Step-Modal-Reveal",
+        ],
+        "content": [
+            "COE1-Focus-Reveal",
+            "COA1-Data-Wall",
+            "COA2-Interactive-Blueprint-Glossary",
+            "COA3-Band-Story-Split",
+        ],
+        "projects": [
+            "PE1-Masonry-Grid",
+            "PE2-Parallax-Tiles-Reveal",
+            "PE3-Interactive-Tabs",
+            "PA1-Infinite-Draggable-Grid",
+            "PA2-Full-Width-Slider",
+            "PA3-Liquid-Distortion-Hover",
+            "PP1-Smart-Sync-Reader",
+        ],
+        "beforeAfter": [
+            "BAE1-Slider-Classic",
+            "BAE2-Fade-Interaction",
+            "BAE3-Diagonal-Split",
+            "BAA1-Lens-Magnifier-Effect",
+            "BAA2-3D-Card-Flip",
+            "BAP1-Curtain-Reveal-Parallax",
+        ],
         "process": ["TE1-Vertical-Snake", "TE2-Horizontal-Steps", "TA1-Circular-Orbit", "TP1-Blueprint-Scanner"],
-        "socialProof": ["PSE1-Infinite-Marquee", "PSE2-Quote-Bubble", "PSA1-Editorial-Float", "PSP1-Auto-Scroll-Rating-Marquee", "PSP2-Video-Grid"],
-        "footer": ["FTE1-Industrial-Dark", "FTE2-Minimal-Clean", "FTE3-Column-Big-Text", "FTA1-Particle-Background-Shader", "FTA2-Kinetic-Typo-Marquee", "FTA3-Reveal-on-Scroll-Total", "FTP1-Corporate-Network-Hub"],
+        "socialProof": [
+            "PSE1-Infinite-Marquee",
+            "PSE2-Quote-Bubble",
+            "PSA1-Editorial-Float",
+            "PSP1-Auto-Scroll-Rating-Marquee",
+            "PSP2-Video-Grid",
+        ],
+        "footer": [
+            "FTE1-Industrial-Dark",
+            "FTE2-Minimal-Clean",
+            "FTE3-Column-Big-Text",
+            "FTA1-Particle-Background-Shader",
+            "FTA2-Kinetic-Typo-Marquee",
+            "FTA3-Reveal-on-Scroll-Total",
+            "FTP1-Corporate-Network-Hub",
+        ],
         "whatsapp_floating": ["WAE1-Floating-Button", "WAE2-Floating-With-Label", "WAA1-Footer-Docked-Help"],
         "branches": ["SUP1-Interactive-Location-Grid"],
         "immersiveVideo": ["VIP1-Cinematic-Theater-Modal"],
@@ -414,10 +555,11 @@ def test_catalog_components_includes_modern_website_template_variants() -> None:
         for variant_code in variant_codes:
             assert variant_code in variants_by_code
             variant = variants_by_code[variant_code]
-            assert variant["status"] == "included"
+            video_extra = component_code == "immersiveVideo"
+            assert variant["status"] == ("extra" if video_extra else "included")
             assert variant["locked"] is False
             assert variant["active"] is True
-            assert variant["extraPrice"] is None
+            assert variant["extraPrice"] == (3990 if video_extra else None)
 
 
 def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
@@ -426,7 +568,11 @@ def test_catalog_components_marks_inactive_variants_as_inactive() -> None:
     component_service = PricingComponentService(repository=repository)
     catalog_service = CatalogService(repository=repository)
 
-    hero = next(component for component in component_service.list(product_type="website") if component["componentCode"] == "hero")
+    hero = next(
+        component
+        for component in component_service.list(product_type="website")
+        if component["componentCode"] == "hero"
+    )
     component_service.update_variant_active(hero["id"], "H8", False)
 
     response = catalog_service.list_components_for_catalog("website", "construction", "plus")
@@ -454,23 +600,26 @@ def test_catalog_components_marks_blocked_variants_by_plan() -> None:
     projects = next(component for component in by_category["components"] if component["componentCode"] == "projects")
     project_variant = projects["variants"][0]
     branches = next(component for component in by_plan["components"] if component["componentCode"] == "branches")
-    branches_variant = branches["variants"][0]
+    branches_variant = next(
+        variant for variant in branches["variants"] if variant["variantCode"] == "SUP1-Interactive-Location-Grid"
+    )
 
     assert premium["status"] == "blocked"
     assert premium["label"] == "No disponible para este plan"
     assert premium["lockLabel"] == "No disponible para este plan"
     assert premium["locked"] is True
-    assert premium["lockReason"] == "Esta variante premium no está disponible en Essential."
-    assert lead_form["status"] == "blocked"
-    assert lead_form["locked"] is True
-    assert lead_form_variant["status"] == "blocked"
-    assert lead_form_variant["label"] == "Componente no disponible para este plan"
-    assert lead_form_variant["lockLabel"] == "Componente no disponible para este plan"
-    assert branches["status"] == "blocked"
-    assert branches["label"] == "No disponible para este plan"
-    assert branches["lockLabel"] == "No disponible para este plan"
-    assert branches["locked"] is True
-    assert branches["lockReason"] == "Este componente no está disponible para el plan seleccionado."
+    assert premium["lockReason"] == "Esta variante premium no está disponible en Básico."
+    assert lead_form["status"] == "included"
+    assert lead_form["locked"] is False
+    assert lead_form_variant["status"] == "included"
+    assert lead_form_variant["label"] == "Incluido"
+    assert lead_form_variant["lockLabel"] == ""
+    assert branches["status"] == "included"
+    assert branches["locked"] is False
+    basic_branches_variant = next(
+        variant for variant in branches["variants"] if variant["variantCode"] == "SUE1-Location-List"
+    )
+    assert basic_branches_variant["status"] == "included"
     assert branches_variant["status"] == "blocked"
     assert projects["allowedByCategory"] is True
     assert projects["status"] == "included"
@@ -485,7 +634,9 @@ def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -
 
     for plan_tier in ("essential", "plus", "pro", "custom"):
         response = service.list_components_for_catalog("website", "construction", plan_tier)
-        whatsapp = next(component for component in response["components"] if component["componentCode"] == "whatsapp_floating")
+        whatsapp = next(
+            component for component in response["components"] if component["componentCode"] == "whatsapp_floating"
+        )
 
         assert whatsapp["name"] == "WhatsApp flotante"
         assert whatsapp["componentTier"] == "core"
@@ -500,13 +651,15 @@ def test_catalog_components_includes_whatsapp_floating_for_all_website_plans() -
             assert variants_by_code[code]["extraPrice"] is None
 
 
-def test_catalog_components_blank_canvas_is_available_from_plus() -> None:
+def test_catalog_components_blank_canvas_is_available_from_basic_and_advanced() -> None:
     repository = InMemoryPricingRepository()
     ensure_pricing_seed(repository=repository)
     service = CatalogService(repository=repository)
 
     essential = service.list_components_for_catalog("website", "construction", "essential")
-    essential_canvas = next(component for component in essential["components"] if component["componentCode"] == "blankCanvas")
+    essential_canvas = next(
+        component for component in essential["components"] if component["componentCode"] == "blankCanvas"
+    )
     essential_variant = essential_canvas["variants"][0]
 
     plus = service.list_components_for_catalog("website", "construction", "plus")
@@ -518,11 +671,12 @@ def test_catalog_components_blank_canvas_is_available_from_plus() -> None:
     pro_variant = pro_canvas["variants"][0]
 
     assert essential_canvas["componentTier"] == "advanced"
-    assert essential_canvas["status"] == "blocked"
-    assert essential_canvas["locked"] is True
-    assert essential_canvas["label"] == "No disponible para este plan"
-    assert essential_variant["status"] == "blocked"
-    assert essential_variant["locked"] is True
+    assert essential["planTier"] == "plus"
+    assert essential_canvas["status"] == "included"
+    assert essential_canvas["locked"] is False
+    assert essential_canvas["label"] == "Disponible"
+    assert essential_variant["status"] == "included"
+    assert essential_variant["locked"] is False
 
     assert plus_canvas["status"] == "included"
     assert plus_canvas["locked"] is False
@@ -545,10 +699,14 @@ def test_catalog_components_pro_ignores_category_block_for_active_components() -
 
     response = service.list_components_for_catalog("website", "corporate", "pro")
     branches = next(component for component in response["components"] if component["componentCode"] == "branches")
-    immersive_video = next(component for component in response["components"] if component["componentCode"] == "immersiveVideo")
-    blank_canvas = next(component for component in response["components"] if component["componentCode"] == "blankCanvas")
+    immersive_video = next(
+        component for component in response["components"] if component["componentCode"] == "immersiveVideo"
+    )
+    blank_canvas = next(
+        component for component in response["components"] if component["componentCode"] == "blankCanvas"
+    )
 
-    for component in (branches, immersive_video, blank_canvas):
+    for component in (branches, blank_canvas):
         assert component["allowedByCategory"] is True
         assert component["status"] == "included"
         assert component["locked"] is False
@@ -556,6 +714,49 @@ def test_catalog_components_pro_ignores_category_block_for_active_components() -
         assert component["lockLabel"] == ""
         assert all(variant["status"] == "included" for variant in component["variants"])
         assert all(variant["locked"] is False for variant in component["variants"])
+
+    assert immersive_video["status"] == "extra"
+    assert immersive_video["locked"] is False
+    assert all(variant["status"] == "extra" for variant in immersive_video["variants"])
+    assert all(variant["extraPrice"] == 3990 for variant in immersive_video["variants"])
+
+
+def test_immersive_video_is_priced_extra_in_basic_and_advanced_but_included_in_custom() -> None:
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    catalog = CatalogService(repository=repository)
+    calculator = PricingCalculatorService(repository=repository)
+    summary = PricingSummaryService(repository=repository).build_summary("website")
+
+    for tier in ("plus", "pro"):
+        component = next(
+            item
+            for item in catalog.list_components_for_catalog("website", "beauty", tier)["components"]
+            if item["componentCode"] == "immersiveVideo"
+        )
+        variant = next(item for item in component["variants"] if item["variantCode"] == "VIP1-Cinematic-Theater-Modal")
+        assert component["status"] == "extra"
+        assert variant["status"] == "extra"
+        assert variant["extraPrice"] == 3990
+        result = calculator.calculate(
+            PricingCalculateRequest(
+                productType="website",
+                planTier=tier,
+                templateCategory="beauty",
+                selectedComponentExtras=[{"componentCode": "immersiveVideo", "variantCode": variant["variantCode"]}],
+            )
+        )
+        assert result["componentExtrasTotal"] == 3990
+
+    custom = next(
+        item
+        for item in catalog.list_components_for_catalog("website", "beauty", "custom")["components"]
+        if item["componentCode"] == "immersiveVideo"
+    )
+    assert custom["status"] == "included"
+    assert all(variant["status"] == "included" for variant in custom["variants"])
+    summary_component = next(item for item in summary["components"] if item["componentCode"] == "immersiveVideo")
+    assert summary_component["variants"][0]["matrix"]["pro"]["status"] == "extra"
 
 
 def test_pricing_summary_builds_matrix_per_variant() -> None:
@@ -568,9 +769,10 @@ def test_pricing_summary_builds_matrix_per_variant() -> None:
     premium_variant = next(variant for variant in hero["variants"] if variant["variantCode"] == "H8")
 
     assert premium_variant["variantTier"] == "premium"
-    assert premium_variant["matrix"]["essential"]["status"] == "blocked"
+    assert "essential" not in premium_variant["matrix"]
     assert premium_variant["matrix"]["plus"]["status"] == "blocked"
     assert premium_variant["matrix"]["pro"]["status"] == "included"
+    assert [plan["name"] for plan in summary["plans"]] == ["Básico", "Avanzadas", "Personalizadas"]
 
 
 def test_pricing_component_list_normalizes_legacy_documents() -> None:
@@ -725,16 +927,27 @@ def test_pricing_plan_list_normalizes_legacy_documents() -> None:
     assert validated.sortOrder == 1
 
 
-def test_pricing_seed_uses_updated_website_plan_prices() -> None:
+def test_pricing_seed_uses_launch_prices_for_website_plans() -> None:
     repository = InMemoryPricingRepository()
 
     ensure_pricing_seed(repository=repository)
     plus_web = PricingPlanService(repository=repository).find_by_tier("website", "plus")
 
     assert plus_web["code"] == "plus_web"
-    assert plus_web["basePrice"] == 19990
-    assert plus_web["basePriceMonthly"] == 19990
-    assert plus_web["basePriceYearly"] == 199990
+    assert plus_web["basePrice"] == 9990
+    assert plus_web["basePriceMonthly"] == 9990
+    assert plus_web["basePriceYearly"] == 99900
+
+    pro_web = PricingPlanService(repository=repository).find_by_tier("website", "pro")
+    assert pro_web["basePrice"] == 19990
+    assert pro_web["basePriceMonthly"] == 19990
+    assert pro_web["basePriceYearly"] == 199900
+
+    custom_web = PricingPlanService(repository=repository).find_by_tier("website", "custom")
+    assert custom_web["basePrice"] == 399990
+    assert custom_web["basePriceMonthly"] is None
+    assert custom_web["basePriceYearly"] is None
+    assert custom_web["durationMonths"] == 0
 
 
 def test_pricing_calculate_sums_plan_and_general_extras() -> None:
@@ -776,3 +989,36 @@ def test_admin_discount_management_routes_are_registered_in_openapi() -> None:
     assert "/api/admin/studio/discount-codes/{discount_code_id}" in paths
     assert "/api/admin/studio/discount-codes/{discount_code_id}/active" in paths
     assert "/api/payments/preview" in paths
+
+
+def test_internal_video_extra_prices_follow_product_billing_periods():
+    from app.modules.pricing.service import GENERAL_EXTRAS
+
+    repository = InMemoryPricingRepository()
+    ensure_pricing_seed(repository=repository)
+    service = PricingCalculatorService(repository=repository)
+    for product, category, code, months, amount in [
+        ("website", "construction", "extra_video", 1, 4990),
+        ("website", "construction", "extra_video", 12, 59880),
+        ("invitation", "wedding", "extra_video_invitation", 12, 4990),
+    ]:
+        for tier in ("plus", "pro"):
+            result = service.calculate(
+                PricingCalculateRequest(
+                    productType=product,
+                    planTier=tier,
+                    templateCategory=category,
+                    selectedExtras=[code],
+                    durationMonths=months,
+                )
+            )
+            assert result["extrasTotal"] == amount
+            line = next(line for line in result["breakdown"] if line["code"] == code)
+            assert line["amount"] == amount
+            extra = GENERAL_EXTRAS[code]
+            assert tier in extra["allowedPlanTiers"]
+            assert extra["maxVideos"] == 1
+            assert extra["maxDurationSeconds"] == 60
+            assert extra["maxFileSizeBytes"] == 30 * 1024 * 1024
+            assert extra["includedTransferBytes"] == 15_000_000_000
+    assert GENERAL_EXTRAS["extra_video_invitation"]["hostingDays"] == 90

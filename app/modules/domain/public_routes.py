@@ -5,10 +5,10 @@ from fastapi import APIRouter, Query, Request
 from app.core.catalog import VariantLevel
 from app.modules.domain.schemas import PublicTemplateCardResponse, SnapshotResponse
 from app.modules.domain.services import (
-    INVITATION_TEMPLATE_CONFIG,
-    WEBSITE_TEMPLATE_CONFIG,
     CUSTOMER_INVITATION_CONFIG,
     CUSTOMER_WEBSITE_CONFIG,
+    INVITATION_TEMPLATE_CONFIG,
+    WEBSITE_TEMPLATE_CONFIG,
     CustomerProjectService,
     TemplateService,
 )
@@ -37,7 +37,9 @@ def list_public_invitation_templates(
     tags: str | None = Query(default=None),
     eventType: str | None = Query(default=None),
 ):
-    return invitation_service.list_public(limit, skip, category, level, parse_csv(tags), eventType, base_url=str(request.base_url).rstrip("/"))
+    return invitation_service.list_public(
+        limit, skip, category, level, parse_csv(tags), eventType, base_url=str(request.base_url).rstrip("/")
+    )
 
 
 @router.get("/invitation-templates/{slug}", response_model=SnapshotResponse)
@@ -55,7 +57,9 @@ def list_public_website_templates(
     tags: str | None = Query(default=None),
     industry: str | None = Query(default=None),
 ):
-    return website_service.list_public(limit, skip, category, level, parse_csv(tags), industry, base_url=str(request.base_url).rstrip("/"))
+    return website_service.list_public(
+        limit, skip, category, level, parse_csv(tags), industry, base_url=str(request.base_url).rstrip("/")
+    )
 
 
 @router.get("/website-templates/{slug}", response_model=SnapshotResponse)

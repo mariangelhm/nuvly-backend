@@ -1,0 +1,32 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+extend-exclude = [".venv", ".test-temp", "tmp", "static", "pytest-cache-files-*"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# These entry points deliberately configure sys.path/env before importing app modules.
+"scripts/audit_data_contracts.py" = ["E402"]
+"scripts/migrate_security_indexes.py" = ["E402"]
+"scripts/test_offline.py" = ["E402"]
+"scripts/create_internal_admin.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.14"
+files = [
+    "app/core/value_types.py",
+    "app/core/catalog.py",
+    "app/modules/domain/configs.py",
+    "app/modules/domain/states.py",
+    "app/modules/pricing/schemas.py",
+    "app/modules/payments/schemas.py",
+    "app/modules/discounts/schemas.py",
+    "app/modules/domain/schemas.py",
+]
+strict = true
+follow_imports = "silent"
+warn_unused_configs = true
+cache_dir = ".test-temp/mypy-cache"
+show_error_codes = true

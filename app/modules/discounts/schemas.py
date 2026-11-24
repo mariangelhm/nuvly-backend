@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+
+from app.core.value_types import CLPAmount, IsoTimestamp
 
 DiscountType = Literal["percentage", "fixed"]
 DiscountAppliesTo = Literal["all", "website", "invitation"]
@@ -11,11 +13,11 @@ DiscountAppliesTo = Literal["all", "website", "invitation"]
 class AdminDiscountCodeCreateRequest(BaseModel):
     code: str = Field(min_length=1, max_length=32)
     discountType: DiscountType
-    value: int = Field(gt=0)
+    value: CLPAmount = Field(gt=0)
     appliesTo: DiscountAppliesTo = "all"
     active: bool = True
     description: Optional[str] = Field(default=None, max_length=160)
-    expiresAt: Optional[str] = None
+    expiresAt: Optional[IsoTimestamp] = None
 
     @field_validator("code")
     @classmethod
@@ -29,7 +31,7 @@ class AdminDiscountCodeCreateRequest(BaseModel):
 
     @field_validator("value")
     @classmethod
-    def validate_value(cls, value: int, info) -> int:
+    def validate_value(cls, value: int, info: ValidationInfo) -> int:
         discount_type = info.data.get("discountType")
         if discount_type == "percentage" and value > 100:
             raise ValueError("Percentage discounts cannot exceed 100.")
@@ -52,6 +54,6 @@ class AdminDiscountCodeResponse(BaseModel):
     appliesTo: DiscountAppliesTo
     active: bool
     description: Optional[str] = None
-    expiresAt: Optional[str] = None
+    expiresAt: Optional[IsoTimestamp] = None
     createdAt: str
     updatedAt: str

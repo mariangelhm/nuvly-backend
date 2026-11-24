@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.core.catalog import VariantLevel
 from app.core.database import get_database
+from app.core.errors import NuvlyError
 from app.modules.auth.dependencies import get_current_admin_user, get_current_internal_user
 from app.modules.auth.schemas import AuthUserResponse, InternalUserCreateRequest
 from app.modules.auth.service import AuthService
@@ -20,6 +21,7 @@ from app.modules.domain.schemas import (
     InvitationTemplateResponse,
     InvitationTemplateUpdate,
     PublishRequest,
+    RestoreWebsiteVersionRequest,
     SnapshotResponse,
     StudioDashboardResponse,
     StudioQuickSummaryResponse,
@@ -34,13 +36,54 @@ from app.modules.domain.services import (
     WEBSITE_TEMPLATE_CONFIG,
     TemplateService,
 )
+from app.modules.domain.website_versions import WebsiteVersionsService
 
 router = APIRouter(prefix="/studio", tags=["studio"])
-admin_router = APIRouter(prefix="/admin/studio", tags=["admin-studio"], dependencies=[Depends(get_current_internal_user)])
+admin_router = APIRouter(
+    prefix="/admin/studio", tags=["admin-studio"], dependencies=[Depends(get_current_internal_user)]
+)
 invitation_service = TemplateService(INVITATION_TEMPLATE_CONFIG)
 website_service = TemplateService(WEBSITE_TEMPLATE_CONFIG)
 auth_service = AuthService()
 discount_code_service = DiscountCodeService()
+website_versions = WebsiteVersionsService()
+
+
+@admin_router.get("/customer-websites")
+def list_admin_customer_websites(
+    search: str = Query(default="", max_length=160),
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    user: dict = Depends(get_current_admin_user),
+):
+    return website_versions.list_websites(search, limit, skip)
+
+
+@admin_router.get("/customer-websites/{project_id}/versions")
+def customer_website_versions(
+    project_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    user: dict = Depends(get_current_admin_user),
+):
+    return website_versions.history(project_id, limit, skip)
+
+
+@admin_router.get("/customer-websites/{project_id}/versions/{snapshot_id}")
+def customer_website_version_preview(
+    project_id: str, snapshot_id: str, request: Request, user: dict = Depends(get_current_admin_user)
+):
+    return website_versions.preview(project_id, snapshot_id, base_url=str(request.base_url).rstrip("/"))
+
+
+@admin_router.post("/customer-websites/{project_id}/versions/{snapshot_id}/restore")
+def restore_customer_website_version(
+    project_id: str,
+    snapshot_id: str,
+    payload: RestoreWebsiteVersionRequest,
+    user: dict = Depends(get_current_admin_user),
+):
+    return website_versions.restore(project_id, snapshot_id, payload.expectedSnapshotId, user, payload.note)
 
 
 def _parse_iso_datetime(value: str | None) -> datetime | None:
@@ -105,43 +148,116 @@ def _build_recent_activity() -> list[dict[str, Any]]:
         )
 
     if _collection_exists(db, "website_templates"):
-        for document in db["website_templates"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1}).limit(50):
-            add_event(f"{document['id']}:created", f'Template "{document.get("title") or "Sin nombre"}" creado', "template", document.get("createdAt"))
-            add_event(f"{document['id']}:published", f'Template "{document.get("title") or "Sin nombre"}" publicado', "template", document.get("lastPublishedAt"))
+        for document in (
+            db["website_templates"]
+            .find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1})
+            .limit(50)
+        ):
+            add_event(
+                f"{document['id']}:created",
+                f'Template "{document.get("title") or "Sin nombre"}" creado',
+                "template",
+                document.get("createdAt"),
+            )
+            add_event(
+                f"{document['id']}:published",
+                f'Template "{document.get("title") or "Sin nombre"}" publicado',
+                "template",
+                document.get("lastPublishedAt"),
+            )
 
     if _collection_exists(db, "invitation_templates"):
-        for document in db["invitation_templates"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1}).limit(50):
-            add_event(f"{document['id']}:created", f'Template "{document.get("title") or "Sin nombre"}" creado', "template", document.get("createdAt"))
-            add_event(f"{document['id']}:published", f'Template "{document.get("title") or "Sin nombre"}" publicado', "template", document.get("lastPublishedAt"))
+        for document in (
+            db["invitation_templates"]
+            .find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1})
+            .limit(50)
+        ):
+            add_event(
+                f"{document['id']}:created",
+                f'Template "{document.get("title") or "Sin nombre"}" creado',
+                "template",
+                document.get("createdAt"),
+            )
+            add_event(
+                f"{document['id']}:published",
+                f'Template "{document.get("title") or "Sin nombre"}" publicado',
+                "template",
+                document.get("lastPublishedAt"),
+            )
 
     if _collection_exists(db, "customer_websites"):
-        for document in db["customer_websites"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1}).limit(50):
+        for document in (
+            db["customer_websites"]
+            .find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1})
+            .limit(50)
+        ):
             title = document.get("title") or "Proyecto sin nombre"
             add_event(f"{document['id']}:created", f'Proyecto "{title}" creado', "project", document.get("createdAt"))
-            add_event(f"{document['id']}:paid", f'Proyecto "{title}" pagado', "project", (document.get("payment") or {}).get("paidAt"))
-            add_event(f"{document['id']}:published", f'Proyecto "{title}" publicado', "project", document.get("lastPublishedAt"))
+            add_event(
+                f"{document['id']}:paid",
+                f'Proyecto "{title}" pagado',
+                "project",
+                (document.get("payment") or {}).get("paidAt"),
+            )
+            add_event(
+                f"{document['id']}:published",
+                f'Proyecto "{title}" publicado',
+                "project",
+                document.get("lastPublishedAt"),
+            )
 
     if _collection_exists(db, "customer_invitations"):
-        for document in db["customer_invitations"].find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1}).limit(50):
+        for document in (
+            db["customer_invitations"]
+            .find({}, {"_id": 0, "id": 1, "title": 1, "createdAt": 1, "lastPublishedAt": 1, "payment": 1})
+            .limit(50)
+        ):
             title = document.get("title") or "Invitación sin nombre"
-            add_event(f"{document['id']}:created", f'Invitación "{title}" creada', "invitation", document.get("createdAt"))
-            add_event(f"{document['id']}:paid", f'Invitación "{title}" pagada', "invitation", (document.get("payment") or {}).get("paidAt"))
-            add_event(f"{document['id']}:published", f'Invitación "{title}" publicada', "invitation", document.get("lastPublishedAt"))
+            add_event(
+                f"{document['id']}:created", f'Invitación "{title}" creada', "invitation", document.get("createdAt")
+            )
+            add_event(
+                f"{document['id']}:paid",
+                f'Invitación "{title}" pagada',
+                "invitation",
+                (document.get("payment") or {}).get("paidAt"),
+            )
+            add_event(
+                f"{document['id']}:published",
+                f'Invitación "{title}" publicada',
+                "invitation",
+                document.get("lastPublishedAt"),
+            )
 
     if _collection_exists(db, "pricing_plans"):
         for document in db["pricing_plans"].find({}, {"_id": 0, "id": 1, "name": 1, "updatedAt": 1}).limit(50):
-            add_event(f"{document['id']}:updated", f'Plan "{document.get("name") or "Sin nombre"}" actualizado', "configuration", document.get("updatedAt"))
+            add_event(
+                f"{document['id']}:updated",
+                f'Plan "{document.get("name") or "Sin nombre"}" actualizado',
+                "configuration",
+                document.get("updatedAt"),
+            )
 
     if _collection_exists(db, "pricing_components"):
         for document in db["pricing_components"].find({}, {"_id": 0, "id": 1, "name": 1, "updatedAt": 1}).limit(50):
-            add_event(f"{document['id']}:updated", f'Componente "{document.get("name") or "Sin nombre"}" actualizado', "component", document.get("updatedAt"))
+            add_event(
+                f"{document['id']}:updated",
+                f'Componente "{document.get("name") or "Sin nombre"}" actualizado',
+                "component",
+                document.get("updatedAt"),
+            )
 
     if _collection_exists(db, "users"):
         for document in db["users"].find({}, {"_id": 0, "id": 1, "name": 1, "email": 1, "createdAt": 1}).limit(50):
             title = document.get("name") or document.get("email") or "Usuario"
-            add_event(f"{document['id']}:created", f'Cliente "{title}" registrado', "customer", document.get("createdAt"))
+            add_event(
+                f"{document['id']}:created", f'Cliente "{title}" registrado', "customer", document.get("createdAt")
+            )
 
-    events.sort(key=lambda item: _parse_iso_datetime(item["createdAt"]) or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    events.sort(
+        key=lambda item: _parse_iso_datetime(item["createdAt"]) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
     return events[:10]
 
 
@@ -151,7 +267,9 @@ def _build_quick_summary() -> StudioQuickSummaryResponse:
         webTemplates=_count_documents_if_collection_exists(db, "website_templates", {}),
         invitationTemplates=_count_documents_if_collection_exists(db, "invitation_templates", {}),
         webComponents=_count_documents_if_collection_exists(db, "pricing_components", {"productType": "website"}),
-        invitationComponents=_count_documents_if_collection_exists(db, "pricing_components", {"productType": "invitation"}),
+        invitationComponents=_count_documents_if_collection_exists(
+            db, "pricing_components", {"productType": "invitation"}
+        ),
         extras=_count_documents_if_collection_exists(db, "pricing_extras", {"active": True}),
         activeUsers=_count_documents_if_collection_exists(db, "users", {"active": True}),
     )
@@ -172,7 +290,9 @@ def list_invitation_templates(
     level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
-    return invitation_service.list(limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/"))
+    return invitation_service.list(
+        limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/")
+    )
 
 
 @router.get("/invitation-templates/{template_id}", response_model=InvitationTemplateResponse)
@@ -182,6 +302,8 @@ def get_invitation_template(template_id: str, request: Request):
 
 @router.put("/invitation-templates/{template_id}", response_model=InvitationTemplateResponse)
 def update_invitation_template(template_id: str, payload: InvitationTemplateUpdate, request: Request):
+    if payload.expectedUpdatedAt is None:
+        raise NuvlyError("Recarga el template antes de guardar.", 428, "PROJECT_VERSION_REQUIRED")
     return invitation_service.update(template_id, payload, base_url=str(request.base_url).rstrip("/"))
 
 
@@ -221,7 +343,9 @@ def list_website_templates(
     level: VariantLevel | None = Query(default=None),
     catalogVisible: bool | None = Query(default=None),
 ):
-    return website_service.list(limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/"))
+    return website_service.list(
+        limit, skip, templateStatus, category, level, catalogVisible, base_url=str(request.base_url).rstrip("/")
+    )
 
 
 @router.get("/website-templates/{template_id}", response_model=WebsiteTemplateResponse)
@@ -231,6 +355,8 @@ def get_website_template(template_id: str, request: Request):
 
 @router.put("/website-templates/{template_id}", response_model=WebsiteTemplateResponse)
 def update_website_template(template_id: str, payload: WebsiteTemplateUpdate, request: Request):
+    if payload.expectedUpdatedAt is None:
+        raise NuvlyError("Recarga el template antes de guardar.", 428, "PROJECT_VERSION_REQUIRED")
     return website_service.update(template_id, payload, base_url=str(request.base_url).rstrip("/"))
 
 

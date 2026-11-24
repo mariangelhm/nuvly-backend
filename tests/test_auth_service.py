@@ -73,6 +73,37 @@ class InMemoryAuthRepository:
                 return deepcopy(token)
         return None
 
+    def record_password_login(self, user_id, credentials_version, now):
+        for user in self.users:
+            if user["id"] == user_id and user.get("credentialsVersion") == credentials_version:
+                user.update(lastLoginAt=now, updatedAt=now)
+                return deepcopy(user)
+        return None
+
+    def link_google_identity(self, user_id, google_link, now):
+        for user in self.users:
+            if user["id"] == user_id:
+                user.setdefault("providerLinks", {})["google"] = deepcopy(google_link)
+                user.update(emailVerified=True, lastLoginAt=now, updatedAt=now)
+                user["authProviders"] = list(dict.fromkeys(user.get("authProviders", []) + ["google"]))
+                return deepcopy(user)
+        raise AssertionError("Missing test user")
+
+    def update_password_credentials(self, user_id, expected_version, provider, auth_providers, new_version, now):
+        for user in self.users:
+            if user["id"] == user_id and user.get("credentialsVersion") == expected_version:
+                user.setdefault("providerLinks", {})["nuvly"] = deepcopy(provider)
+                user.update(authProviders=auth_providers, credentialsVersion=new_version, updatedAt=now)
+                return True
+        return False
+
+    def consume_password_reset_token(self, token_id: str, now: str) -> bool:
+        for token in self.reset_tokens:
+            if token.get("id") == token_id and token.get("usedAt") is None:
+                token.update(usedAt=now, updatedAt=now)
+                return True
+        return False
+
     def replace_password_reset_token(self, token_id: str, document: dict[str, Any]) -> dict[str, Any]:
         for index, token in enumerate(self.reset_tokens):
             if token.get("id") == token_id:
@@ -444,38 +475,92 @@ def test_auth_routes_are_registered_in_openapi() -> None:
     assert "post" in paths["/api/auth/reset-password"]
 
 
-def test_ensure_internal_user_creates_required_nuvly_account() -> None:
+def test_create_internal_admin_uses_explicit_credentials() -> None:
     repository = InMemoryAuthRepository()
     service = AuthService(repository=repository)
 
-    user = service.ensure_internal_user(email="nuvlystudio@gmail.com", password="Admin.1234")
+    user = service.create_internal_user(
+        email="admin@example.test",
+        password="Provision1#",
+        name=" Admin ",
+        internal_role="admin",
+    )
 
-    assert user["email"] == "nuvlystudio@gmail.com"
+    assert user["email"] == "admin@example.test"
+    assert user["name"] == "Admin"
     assert user["accountType"] == "internal"
     assert user["internalRole"] == "admin"
-    response = service.login_internal(LoginRequest(email="nuvlystudio@gmail.com", password="Admin.1234"))
-    assert response["user"]["email"] == "nuvlystudio@gmail.com"
+    assert user["providerLinks"]["nuvly"]["passwordHash"] != "Provision1#"
+    response = service.login_internal(LoginRequest(email="admin@example.test", password="Provision1#"))
+    assert response["user"]["email"] == "admin@example.test"
 
 
-def test_ensure_internal_user_upgrades_existing_email_to_internal() -> None:
+@pytest.mark.parametrize(
+    "account_type,role,active",
+    [
+        ("customer", None, True),
+        ("internal", "developer", True),
+        ("internal", "admin", False),
+    ],
+)
+def test_internal_provisioning_never_changes_existing_account(account_type, role, active) -> None:
     repository = InMemoryAuthRepository()
     service = AuthService(repository=repository)
     service.register(
         RegisterRequest(
-            email="nuvlystudio@gmail.com",
-            confirmEmail="nuvlystudio@gmail.com",
+            email="existing@example.test",
+            confirmEmail="existing@example.test",
             password="Cliente.1234",
             confirmPassword="Cliente.1234",
             name="Cliente",
         )
     )
 
-    user = service.ensure_internal_user(email="nuvlystudio@gmail.com", password="Admin.1234")
+    repository.users[0].update(accountType=account_type, internalRole=role, active=active)
+    before = deepcopy((repository.users, repository.sessions))
+    with pytest.raises(NuvlyError) as exc:
+        service.create_internal_user(
+            email=" EXISTING@example.test ",
+            password="Replacement1#",
+            name="Otro",
+            internal_role="admin",
+        )
+    assert exc.value.code == "EMAIL_ALREADY_REGISTERED"
+    assert exc.value.status_code == 409
+    assert (repository.users, repository.sessions) == before
 
-    assert user["accountType"] == "internal"
-    assert user["internalRole"] == "admin"
-    response = service.login_internal(LoginRequest(email="nuvlystudio@gmail.com", password="Admin.1234"))
-    assert response["authScope"] == "internal"
+
+def test_application_startup_never_provisions_or_modifies_users(monkeypatch) -> None:
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.modules.auth.repository import AuthRepository
+
+    def forbid_user_access(*args, **kwargs):
+        raise AssertionError("Startup must not access user provisioning")
+
+    monkeypatch.setattr(AuthRepository, "find_user_by_email", forbid_user_access)
+    monkeypatch.setattr(AuthRepository, "insert_user", forbid_user_access)
+    monkeypatch.setattr(AuthRepository, "replace_user", forbid_user_access)
+    monkeypatch.setattr(main_module, "ping_database", lambda: True)
+    monkeypatch.setattr(main_module, "create_indexes", lambda: None)
+    monkeypatch.setattr(
+        main_module,
+        "ensure_pricing_seed",
+        lambda: SimpleNamespace(
+            insertedPlans=0,
+            insertedComponents=0,
+            insertedTemplateCategories=0,
+            skippedPlans=0,
+            skippedComponents=0,
+            skippedTemplateCategories=0,
+        ),
+    )
+    app = SimpleNamespace(state=SimpleNamespace())
+    for _ in range(2):
+        asyncio.run(main_module.initialize_application(app))
+        assert app.state.startup_status == "ready"
+        assert app.state.startup_error is None
 
 
 def test_create_internal_user_creates_developer_account() -> None:

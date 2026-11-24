@@ -1,7 +1,15 @@
 .venv/
+.venv-backup*/
 __pycache__/
 *.pyc
 .env
 .vscode/
 .idea/
 .DS_Store
+
+# Local quality/test artifacts
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.test-temp/
+tmp/

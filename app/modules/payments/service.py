@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict
 from urllib.parse import quote, urlparse
 
 from app.core.config import get_settings
 from app.core.errors import NuvlyError
 from app.core.utils import new_id, utc_now_iso
+from app.core.value_types import clp_amount
 from app.modules.discounts.service import DiscountCodeService
 from app.modules.domain.defaults import default_payment
 from app.modules.domain.repository import DomainRepository
@@ -17,6 +18,7 @@ from app.modules.domain.services import (
     CustomerProjectService,
     append_status_history,
 )
+from app.modules.payments.terms import validate_terms_acceptance, website_terms_document
 
 logger = logging.getLogger(__name__)
 
@@ -88,20 +90,86 @@ class PaymentService:
         effective_base_url = self._resolve_frontend_base_url(base_url)
         return f"{effective_base_url}/{quote(project_id)}/{quote(public_slug)}"
 
+    @staticmethod
+    def _clp_amount(value):
+        try:
+            return clp_amount(value)
+        except ValueError as error:
+            raise NuvlyError(
+                "Hay un importe CLP inválido en el catálogo o proyecto. Revisa la tarifa antes de pagar.",
+                422,
+                "INVALID_CLP_AMOUNT",
+            ) from error
+
     def _build_checkout_pricing(self, payload) -> Dict[str, Any]:
         project_service = self._project_service(payload.projectType)
         project = project_service.get(payload.projectId)
         project_service._validate_ready_for_pending_payment(project)
 
-        base_amount = float((project.get("metadata") or {}).get("basePrice") or 0)
+        base_amount = self._clp_amount((project.get("metadata") or {}).get("basePrice") or 0)
+        billing_terms = None
+        plan_tier = project.get("planTier") or (project.get("metadata") or {}).get("planTier")
+        if payload.projectType == "website" and plan_tier in {"plus", "pro"}:
+            plan = self.repository.find_document(
+                "pricing_plans", {"productType": "website", "tier": plan_tier, "active": True}
+            )
+            if not plan:
+                raise NuvlyError(
+                    "No pudimos consultar la tarifa anual del plan.", 400, "WEBSITE_PLAN_PRICE_UNAVAILABLE"
+                )
+            monthly = self._clp_amount(plan.get("basePriceMonthly") or plan.get("basePrice") or 0)
+            base_amount = self._clp_amount(plan.get("basePriceYearly") or monthly * 12)
+            if monthly <= 0:
+                raise NuvlyError(
+                    "El plan no tiene una tarifa de renovación válida.", 400, "WEBSITE_PLAN_PRICE_UNAVAILABLE"
+                )
+            billing_terms = {
+                "initialMonths": 12,
+                "initialAmount": base_amount,
+                "renewalAmount": monthly,
+                "renewalPeriod": "monthly",
+                "renewalStartsMonth": 13,
+            }
         if base_amount <= 0:
             raise NuvlyError("El proyecto no tiene un precio base valido para checkout.", 400, "INVALID_PROJECT_PRICE")
         if payload.withCustomDomain and payload.projectType != "website":
-            raise NuvlyError("El dominio propio solo esta disponible para websites.", 400, "CUSTOM_DOMAIN_NOT_SUPPORTED")
+            raise NuvlyError(
+                "El dominio propio solo esta disponible para websites.", 400, "CUSTOM_DOMAIN_NOT_SUPPORTED"
+            )
 
         custom_domain = (payload.customDomain or "").strip() or None
         custom_domain_surcharge = CUSTOM_DOMAIN_SURCHARGE_CLP if payload.withCustomDomain else 0
-        subtotal_amount = base_amount + custom_domain_surcharge
+        component_extras_total = 0
+        selected_component_extras = project.get("selectedComponentExtras") or []
+        if selected_component_extras:
+            from app.modules.pricing.service import (
+                PricingComponentService,
+                build_catalog_component_state,
+                build_variant_catalog_state,
+                is_paid_immersive_video,
+            )
+
+            component_service = PricingComponentService(repository=self.repository)
+            plan_tier = project.get("planTier") or (project.get("metadata") or {}).get("planTier")
+            for selected in selected_component_extras:
+                component_code = selected.get("componentCode")
+                pair = component_service.find_variant(payload.projectType, component_code, selected.get("variantCode"))
+                component = pair["component"]
+                variant = pair["variant"]
+                component_state = build_catalog_component_state(component, plan_tier)
+                variant_state = build_variant_catalog_state(
+                    variant=variant,
+                    plan_tier=plan_tier,
+                    component_status=component_state["rawStatus"],
+                    force_extra=is_paid_immersive_video(component_code, plan_tier, variant),
+                )
+                if variant_state["status"] != "extra":
+                    raise NuvlyError(
+                        "El extra seleccionado no está disponible para este plan.", 400, "INVALID_COMPONENT_EXTRA"
+                    )
+                component_extras_total += self._clp_amount(variant_state["extraPrice"])
+
+        subtotal_amount = self._clp_amount(base_amount + custom_domain_surcharge + component_extras_total)
         discount = None
         discount_amount = 0
         if payload.discountCode:
@@ -114,6 +182,9 @@ class PaymentService:
             "project_service": project_service,
             "customDomain": custom_domain,
             "customDomainSurcharge": custom_domain_surcharge,
+            "componentExtrasTotal": component_extras_total,
+            "basePrice": base_amount,
+            "billingTerms": billing_terms,
             "subtotalAmount": subtotal_amount,
             "discount": discount,
             "discountAmount": discount_amount,
@@ -128,6 +199,9 @@ class PaymentService:
             "projectId": payload.projectId,
             "amount": pricing["amount"],
             "subtotalAmount": pricing["subtotalAmount"],
+            "basePrice": pricing["basePrice"],
+            "billingTerms": pricing["billingTerms"],
+            "extrasTotal": pricing["componentExtrasTotal"],
             "discountAmount": pricing["discountAmount"],
             "discountCode": discount.get("code") if discount else None,
             "discountType": discount.get("discountType") if discount else None,
@@ -139,10 +213,24 @@ class PaymentService:
             "domainOptionExplanation": CUSTOM_DOMAIN_EXPLANATION if payload.projectType == "website" else None,
         }
 
-    def create_checkout(self, payload, base_url: str | None = None) -> Dict[str, Any]:
+    @staticmethod
+    def _assert_project_can_checkout(project):
+        if (project.get("payment") or {}).get("status") == "paid" or project.get("customerStatus") in (
+            "paid",
+            "published",
+        ):
+            raise NuvlyError(
+                "Este proyecto ya está pagado. Puedes editarlo o abrir su página desde Mis productos.",
+                409,
+                "PROJECT_ALREADY_PAID",
+            )
+
+    def create_checkout(self, payload, base_url: str | None = None, *, payment_id: str | None = None) -> Dict[str, Any]:
+        validate_terms_acceptance(payload)
         pricing = self._build_checkout_pricing(payload)
         project_service = pricing["project_service"]
         project = pricing["project"]
+        self._assert_project_can_checkout(project)
         custom_domain = pricing["customDomain"]
         custom_domain_surcharge = pricing["customDomainSurcharge"]
         subtotal_amount = pricing["subtotalAmount"]
@@ -151,7 +239,7 @@ class PaymentService:
         amount = pricing["amount"]
 
         now = utc_now_iso()
-        payment_id = new_id("pay")
+        payment_id = payment_id or new_id("pay")
         checkout_url = self._build_checkout_url(payload.provider, payment_id, base_url)
         payment_document = {
             "id": payment_id,
@@ -159,8 +247,15 @@ class PaymentService:
             "projectType": payload.projectType,
             "projectId": payload.projectId,
             "provider": payload.provider,
+            "projectTitle": project.get("title"),
+            "templateId": project.get("templateId"),
+            "publicSlug": project.get("publicSlug"),
+            "planTier": project.get("planTier"),
+            "basePrice": pricing["basePrice"],
+            "extrasTotal": pricing["componentExtrasTotal"],
             "status": "pending",
             "amount": amount,
+            "billingTerms": pricing["billingTerms"],
             "subtotalAmount": subtotal_amount,
             "discountAmount": discount_amount,
             "discountCode": discount.get("code") if discount else None,
@@ -178,12 +273,32 @@ class PaymentService:
             "updatedAt": now,
         }
 
+        if payload.projectType == "website":
+            payment_document["termsAcceptance"] = {
+                "version": payload.termsVersion,
+                "acceptedAt": now,
+                "document": website_terms_document(),
+                "projectId": payload.projectId,
+                "projectTitle": project.get("title"),
+                "planTier": project.get("planTier"),
+                "billingTerms": pricing["billingTerms"],
+                "amount": amount,
+                "currency": "CLP",
+                "withCustomDomain": payload.withCustomDomain,
+                "customDomain": custom_domain,
+                "pricing": {
+                    key: payment_document[key]
+                    for key in ("subtotalAmount", "discountAmount", "discountCode", "customDomainSurcharge")
+                },
+            }
+
         payment_info = default_payment()
         payment_info.update(
             {
                 "status": "pending",
                 "provider": payload.provider,
                 "amount": amount,
+                "billingTerms": pricing["billingTerms"],
                 "subtotalAmount": subtotal_amount,
                 "discountAmount": discount_amount,
                 "discountCode": discount.get("code") if discount else None,
@@ -299,7 +414,9 @@ class PaymentService:
         )
 
     def process_webhook(self, provider: str, payload) -> Dict[str, Any]:
-        payment = self.repository.find_document(self._payments_collection_name(), {"id": payload.paymentId, "provider": provider})
+        payment = self.repository.find_document(
+            self._payments_collection_name(), {"id": payload.paymentId, "provider": provider}
+        )
         if not payment:
             raise NuvlyError("Pago no encontrado para el webhook recibido.", 404, "PAYMENT_NOT_FOUND")
 
@@ -397,6 +514,14 @@ class PaymentService:
                     reason="payment_approved_auto_publish",
                 )
                 updated_project = project_service.get(project["id"])
+                # Keep the published address on the customer project as well as the payment.
+                project_service.repository.update_document_fields(
+                    project_service.config.collection,
+                    project["id"],
+                    {"payment": {**updated_project["payment"], "finalUrl": final_url}},
+                    project_service.config.not_found_message,
+                    project_service.config.not_found_code,
+                )
                 if url_field == "websiteUrl":
                     public_website_url = final_url
                 else:

@@ -73,16 +73,31 @@ def test_studio_dashboard_returns_recent_activity_and_quick_summary(monkeypatch)
     fake_db = FakeDatabase(
         {
             "website_templates": [
-                {"id": "wtpl_1", "title": "Template Web", "createdAt": "2026-05-25T10:00:00+00:00", "lastPublishedAt": "2026-05-25T12:00:00+00:00"},
+                {
+                    "id": "wtpl_1",
+                    "title": "Template Web",
+                    "createdAt": "2026-05-25T10:00:00+00:00",
+                    "lastPublishedAt": "2026-05-25T12:00:00+00:00",
+                },
             ],
             "invitation_templates": [
                 {"id": "itpl_1", "title": "Template Invitación", "createdAt": "2026-05-25T09:00:00+00:00"},
             ],
             "customer_websites": [
-                {"id": "cweb_1", "title": "Proyecto Web", "createdAt": "2026-05-25T11:00:00+00:00", "payment": {"paidAt": "2026-05-25T13:00:00+00:00"}},
+                {
+                    "id": "cweb_1",
+                    "title": "Proyecto Web",
+                    "createdAt": "2026-05-25T11:00:00+00:00",
+                    "payment": {"paidAt": "2026-05-25T13:00:00+00:00"},
+                },
             ],
             "pricing_components": [
-                {"id": "comp_1", "name": "Hero Dinámico", "productType": "website", "updatedAt": "2026-05-25T08:00:00+00:00"},
+                {
+                    "id": "comp_1",
+                    "name": "Hero Dinámico",
+                    "productType": "website",
+                    "updatedAt": "2026-05-25T08:00:00+00:00",
+                },
                 {"id": "comp_2", "name": "RSVP", "productType": "invitation", "updatedAt": "2026-05-25T07:00:00+00:00"},
             ],
             "pricing_extras": [
@@ -111,8 +126,8 @@ def test_studio_dashboard_returns_recent_activity_and_quick_summary(monkeypatch)
 
 
 def test_admin_can_create_internal_user_from_studio(monkeypatch) -> None:
-    from app.modules.domain import studio_routes
     from app.modules.auth.schemas import InternalUserCreateRequest
+    from app.modules.domain import studio_routes
 
     fake_db = FakeDatabase({"users": []})
     monkeypatch.setattr(studio_routes, "get_database", lambda: fake_db)
@@ -211,8 +226,8 @@ def test_list_internal_users_from_studio_filters_only_internal(monkeypatch) -> N
 
 
 def test_admin_can_create_discount_code_from_studio(monkeypatch) -> None:
-    from app.modules.domain import studio_routes
     from app.modules.discounts.schemas import AdminDiscountCodeCreateRequest
+    from app.modules.domain import studio_routes
 
     monkeypatch.setattr(
         studio_routes,
@@ -293,8 +308,8 @@ def test_list_discount_codes_from_studio(monkeypatch) -> None:
 
 
 def test_admin_can_update_discount_code_from_studio(monkeypatch) -> None:
-    from app.modules.domain import studio_routes
     from app.modules.discounts.schemas import AdminDiscountCodeUpdateRequest
+    from app.modules.domain import studio_routes
 
     monkeypatch.setattr(
         studio_routes,
@@ -340,8 +355,8 @@ def test_admin_can_update_discount_code_from_studio(monkeypatch) -> None:
 
 
 def test_admin_can_disable_discount_code_from_studio(monkeypatch) -> None:
-    from app.modules.domain import studio_routes
     from app.modules.discounts.schemas import AdminDiscountCodeActiveUpdate
+    from app.modules.domain import studio_routes
 
     monkeypatch.setattr(
         studio_routes,

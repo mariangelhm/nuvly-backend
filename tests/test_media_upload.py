@@ -9,16 +9,16 @@ from starlette.requests import Request
 
 from app.core.errors import NuvlyError
 
-PNG_1X1 = (
-    b"\x89PNG\r\n\x1a\n"
-    b"\x00\x00\x00\rIHDR"
-    b"\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x02\x00\x00\x00"
-    b"\x90wS\xde"
-    b"\x00\x00\x00\x0cIDATx\x9cc`\x00\x00\x00\x02\x00\x01"
-    b"\xe2!\xbc3"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+
+def _valid_png():
+    from PIL import Image
+
+    stream = BytesIO()
+    Image.new("RGB", (1, 1)).save(stream, format="PNG")
+    return stream.getvalue()
+
+
+PNG_1X1 = _valid_png()
 
 
 class InMemoryMediaCollection:

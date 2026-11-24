@@ -1,15 +1,21 @@
 from typing import Literal
 
-
 ProductType = Literal["website", "invitation"]
 PlanTier = Literal["essential", "plus", "pro", "custom"]
 VariantLevel = Literal["core", "advanced", "premium"]
 WebsiteTemplateCategory = Literal[
     "construction",
     "beauty",
+    "beauty_salon",
+    "cafe",
+    "gym",
+    "dentist",
+    "psychologist",
+    "lawyers",
     "technical_services",
     "restaurant",
     "portfolio",
+    "music",
     "corporate",
     "health",
     "education",
@@ -30,9 +36,16 @@ VARIANT_LEVELS: tuple[VariantLevel, ...] = ("core", "advanced", "premium")
 WEBSITE_TEMPLATE_CATEGORIES: tuple[WebsiteTemplateCategory, ...] = (
     "construction",
     "beauty",
+    "beauty_salon",
+    "cafe",
+    "gym",
+    "dentist",
+    "psychologist",
+    "lawyers",
     "technical_services",
     "restaurant",
     "portfolio",
+    "music",
     "corporate",
     "health",
     "education",
@@ -114,6 +127,8 @@ def normalize_plan_tier(value: str | None, default: PlanTier = "plus") -> PlanTi
     if value is None:
         return default
     normalized = value.strip().lower()
+    if normalized == "essential":
+        return "plus"
     if normalized in VALID_PLAN_TIERS:
         return normalized  # type: ignore[return-value]
     return default

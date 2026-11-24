@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
-if (-Not (Test-Path ".venv")) {
-  Write-Host "No existe .venv. Crea el entorno con: python -m venv .venv"
+Set-Location $PSScriptRoot
+$pythonPath = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-Not (Test-Path -LiteralPath $pythonPath)) {
+  Write-Host "No existe el Python de .venv. Sigue los pasos de instalacion del README.md."
   exit 1
 }
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn app.main:app --reload
+& $pythonPath -m uvicorn app.main:app --reload
+exit $LASTEXITCODE

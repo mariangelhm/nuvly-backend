@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from html import escape
 import logging
 import smtplib
 from email.message import EmailMessage
+from html import escape
 
 from app.core.config import get_settings
 from app.core.errors import NuvlyError
@@ -122,9 +122,8 @@ class AuthEmailService:
 
         if not settings.smtp_host or not settings.smtp_from_email:
             logger.warning(
-                "SMTP not configured; password reset email was not sent externally | to=%s resetUrl=%s",
+                "SMTP not configured; password reset email was not sent externally | to=%s",
                 email,
-                reset_url,
             )
             raise NuvlyError(
                 "El servicio de recuperacion por correo no está disponible en este momento.",

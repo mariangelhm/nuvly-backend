@@ -1,4 +1,5 @@
 import logging
+import traceback
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError, ResponseValidationError
@@ -58,15 +59,15 @@ def _validation_error_payload(request: Request, exc: RequestValidationError) -> 
 
 async def handle_nuvly_error(request: Request, exc: NuvlyError):
     logger.warning(
-        "Handled NuvlyError | request=%s | status=%s | code=%s | message=%s",
+        "Handled NuvlyError | request=%s | status=%s | code=%s",
         _request_context(request),
         exc.status_code,
         exc.code,
-        exc.message,
     )
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.code, "message": exc.message}},
+        headers={"Retry-After": str(exc.retry_after)} if hasattr(exc, "retry_after") else None,
     )
 
 
@@ -74,20 +75,20 @@ async def handle_request_validation_error(request: Request, exc: RequestValidati
     logger.warning(
         "Request validation failed | request=%s | errors=%s",
         _request_context(request),
-        exc.errors(),
+        [{"loc": error.get("loc"), "type": error.get("type")} for error in exc.errors()],
     )
     payload = _validation_error_payload(request, exc)
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={"error": payload},
     )
 
 
 async def handle_response_validation_error(request: Request, exc: ResponseValidationError):
-    logger.exception(
+    logger.error(
         "Response validation failed | request=%s | errors=%s",
         _request_context(request),
-        exc.errors(),
+        [{"loc": error.get("loc"), "type": error.get("type")} for error in exc.errors()],
     )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -96,7 +97,10 @@ async def handle_response_validation_error(request: Request, exc: ResponseValida
 
 
 async def handle_unexpected_error(request: Request, exc: Exception):
-    logger.exception("Unhandled exception | request=%s", _request_context(request), exc_info=exc)
+    frames = [(frame.filename, frame.lineno, frame.name) for frame in traceback.extract_tb(exc.__traceback__)]
+    logger.error(
+        "Unhandled exception | request=%s type=%s frames=%s", _request_context(request), type(exc).__name__, frames
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": {"code": "INTERNAL_SERVER_ERROR", "message": "Internal server error."}},

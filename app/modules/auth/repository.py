@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.database import get_database
@@ -34,8 +35,21 @@ class AuthRepository:
         )
 
     def find_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        return self._public_document(self.collection("users").find_one({"id": user_id}, {"_id": 0}))
+
+    def find_user_by_google_subject(self, subject: str) -> dict[str, Any] | None:
         return self._public_document(
-            self.collection("users").find_one({"id": user_id}, {"_id": 0})
+            self.collection("users").find_one({"providerLinks.google.subject": subject}, {"_id": 0})
+        )
+
+    def insert_google_challenge(self, document: dict[str, Any]) -> None:
+        self.collection("auth_google_challenges").insert_one(document)
+
+    def consume_google_challenge(self, token_hash: str, now) -> dict[str, Any] | None:
+        return self._public_document(
+            self.collection("auth_google_challenges").find_one_and_delete(
+                {"tokenHash": token_hash, "expiresAt": {"$gt": now}},
+            )
         )
 
     def insert_user(self, document: dict[str, Any]) -> dict[str, Any]:
@@ -73,9 +87,7 @@ class AuthRepository:
         return self._public_document(document) or {}
 
     def find_session_by_token_hash(self, token_hash: str) -> dict[str, Any] | None:
-        return self._public_document(
-            self.collection("auth_sessions").find_one({"tokenHash": token_hash}, {"_id": 0})
-        )
+        return self._public_document(self.collection("auth_sessions").find_one({"tokenHash": token_hash}, {"_id": 0}))
 
     def replace_session(self, session_id: str, document: dict[str, Any]) -> dict[str, Any]:
         result = self.collection("auth_sessions").replace_one({"id": session_id}, document)
@@ -101,3 +113,55 @@ class AuthRepository:
         if result.matched_count == 0:
             raise NuvlyError("Token de recuperacion no encontrado.", 404, "RESET_TOKEN_NOT_FOUND")
         return self._public_document(document) or {}
+
+    def consume_password_reset_token(self, token_id: str, now: str) -> bool:
+        result = self.collection("password_reset_tokens").update_one(
+            {"id": token_id, "usedAt": None},
+            {"$set": {"usedAt": now, "updatedAt": now}},
+        )
+        return result.modified_count == 1
+
+    def update_password_credentials(
+        self, user_id, expected_version, provider, auth_providers, new_version, now
+    ) -> bool:
+        # CAS prevents simultaneous recovery links from overwriting a newer password.
+        result = self.collection("users").update_one(
+            {"id": user_id, "credentialsVersion": expected_version},
+            {
+                "$set": {
+                    "providerLinks.nuvly": provider,
+                    "authProviders": auth_providers,
+                    "credentialsVersion": new_version,
+                    "updatedAt": now,
+                }
+            },
+        )
+        return result.modified_count == 1
+
+    def record_password_login(self, user_id, credentials_version, now):
+        return self._public_document(
+            self.collection("users").find_one_and_update(
+                {"id": user_id, "credentialsVersion": credentials_version},
+                {"$set": {"lastLoginAt": now, "updatedAt": now}},
+                return_document=ReturnDocument.AFTER,
+            )
+        )
+
+    def link_google_identity(self, user_id, google_link, now):
+        # Never replace a concurrently changed password, role or credentialsVersion.
+        document = self.collection("users").find_one_and_update(
+            {"id": user_id},
+            {
+                "$set": {
+                    "providerLinks.google": google_link,
+                    "emailVerified": True,
+                    "lastLoginAt": now,
+                    "updatedAt": now,
+                },
+                "$addToSet": {"authProviders": "google"},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if document is None:
+            raise NuvlyError("Usuario no encontrado.", 404, "USER_NOT_FOUND")
+        return self._public_document(document)

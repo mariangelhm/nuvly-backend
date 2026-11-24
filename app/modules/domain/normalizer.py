@@ -3,7 +3,6 @@ from typing import Any, Dict, List
 
 from app.core.catalog import (
     DEFAULT_PLAN_TIER_BY_PRODUCT_TYPE,
-    DEFAULT_TEMPLATE_CATEGORY_BY_PRODUCT_TYPE,
     normalize_plan_tier,
     normalize_product_type,
     normalize_template_category,
@@ -13,7 +12,7 @@ from app.core.errors import NuvlyError
 from app.core.utils import slugify
 from app.modules.domain.block_registry import BLOCK_REGISTRY
 from app.modules.domain.defaults import default_main_page, default_page_source
-
+from app.modules.domain.states import DOCUMENT_STATES
 
 NON_INDEXABLE_STATUSES = {
     "draft",
@@ -112,7 +111,9 @@ def _legacy_linked_pages(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
         normalized_page.setdefault("kind", "linked")
         normalized_page.setdefault("title", f"Subpagina {index}")
         normalized_page.setdefault("slug", slugify(normalized_page.get("title", "")))
-        normalized_page.setdefault("path", f"/{normalized_page['slug']}" if normalized_page["slug"] else f"/linked-{index}")
+        normalized_page.setdefault(
+            "path", f"/{normalized_page['slug']}" if normalized_page["slug"] else f"/linked-{index}"
+        )
         normalized_page.setdefault("parentPageId", "main")
         normalized_page.setdefault("source", default_page_source())
         normalized_page.setdefault("seo", {})
@@ -187,6 +188,16 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
             raise NuvlyError("Cada page debe tener path no vacio.", 422, "INVALID_PAGE_PATH")
         if not page_path.startswith("/"):
             raise NuvlyError("Cada page debe tener path absoluto.", 422, "INVALID_PAGE_PATH")
+        if (
+            page_path.startswith("//")
+            or "\\" in page_path
+            or "?" in page_path
+            or "#" in page_path
+            or any(part in {".", ".."} for part in page_path.split("/"))
+        ):
+            raise NuvlyError(
+                "El path debe ser una ruta local sin navegación relativa, query ni fragmento.", 422, "INVALID_PAGE_PATH"
+            )
         if page_path in seen_page_paths:
             raise NuvlyError(f"Pagina duplicada por path: {page_path}", 422, "DUPLICATED_PAGE_PATH")
         seen_page_paths.add(page_path)
@@ -233,6 +244,18 @@ def _normalize_pages(document: Dict[str, Any]) -> List[Dict[str, Any]]:
         if parent_page_id is not None and parent_page_id not in seen_page_ids:
             raise NuvlyError(f"parentPageId inexistente: {parent_page_id}", 422, "PAGE_PARENT_NOT_FOUND")
 
+    # Every linked page must reach the primary; existence alone permits cycles.
+    parents = {page["id"]: page.get("parentPageId") for page in pages}
+    complete = set()
+    for page_id in parents:
+        chain = set()
+        cursor = page_id
+        while cursor is not None and cursor not in complete:
+            if cursor in chain:
+                raise NuvlyError("Las páginas no pueden formar ciclos de parentesco.", 422, "PAGE_PARENT_CYCLE")
+            chain.add(cursor)
+            cursor = parents[cursor]
+        complete.update(chain)
     return pages
 
 
@@ -265,6 +288,17 @@ def _apply_explicit_root_blocks_to_primary_page(
 
 def normalize_document(document: Dict[str, Any], status_field: str) -> Dict[str, Any]:
     normalized = deepcopy(document)
+    schema_version = normalized.get("schemaVersion", 0)
+    if type(schema_version) is not int or schema_version not in {0, 1}:
+        raise NuvlyError("Versión del documento no soportada.", 422, "UNSUPPORTED_SCHEMA_VERSION")
+    normalized["schemaVersion"] = 1
+    status = normalized.get(status_field)
+    if (
+        status_field not in DOCUMENT_STATES
+        or not isinstance(status, str)
+        or status not in DOCUMENT_STATES[status_field]
+    ):
+        raise NuvlyError("Estado del documento inválido.", 422, "INVALID_DOCUMENT_STATUS")
     normalized["slug"] = slugify(normalized.get("slug") or normalized.get("title", ""))
     default_product_type = "invitation" if normalized.get("experienceType") == "invitation" else "website"
     normalized["productType"] = normalize_product_type(normalized.get("productType"), default=default_product_type)

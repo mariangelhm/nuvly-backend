@@ -1,8 +1,8 @@
 from functools import lru_cache
 from typing import List
+from urllib.parse import urlsplit
 
-from pydantic import Field
-from pydantic import ValidationError
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,16 @@ class Settings(BaseSettings):
     )
     public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
     frontend_public_base_url: str | None = Field(default=None, alias="FRONTEND_PUBLIC_BASE_URL")
-    media_max_size_mb: int = Field(default=5, alias="MEDIA_MAX_SIZE_MB")
+    payments_environment: str = Field(default="integration", alias="PAYMENTS_ENVIRONMENT")
+    payments_production_enabled: bool = Field(default=False, alias="PAYMENTS_PRODUCTION_ENABLED")
+    transbank_commerce_code: str | None = Field(default=None, alias="TRANSBANK_COMMERCE_CODE")
+    transbank_api_key: SecretStr | None = Field(default=None, alias="TRANSBANK_API_KEY")
+    mercadopago_test_access_token: SecretStr | None = Field(default=None, alias="MERCADOPAGO_TEST_ACCESS_TOKEN")
+    mercadopago_test_webhook_secret: SecretStr | None = Field(default=None, alias="MERCADOPAGO_TEST_WEBHOOK_SECRET")
+    media_max_size_mb: int = Field(default=5, gt=0, alias="MEDIA_MAX_SIZE_MB")
+    media_owner_daily_upload_mb: int = Field(default=100, gt=0, alias="MEDIA_OWNER_DAILY_UPLOAD_MB")
+    media_storage_root: str | None = Field(default=None, alias="MEDIA_STORAGE_ROOT")
+    media_storage_durable: bool = Field(default=False, alias="MEDIA_STORAGE_DURABLE")
     smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
     smtp_port: int = Field(default=587, alias="SMTP_PORT")
     smtp_username: str | None = Field(default=None, alias="SMTP_USERNAME")
@@ -28,7 +37,8 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     support_contact_email: str = Field(default="nuvlystudio@gmail.com", alias="SUPPORT_CONTACT_EMAIL")
     auth_session_ttl_days: int = Field(default=30, gt=0, alias="AUTH_SESSION_TTL_DAYS")
-    auth_reset_password_ttl_minutes: int = Field(default=10, alias="AUTH_RESET_PASSWORD_TTL_MINUTES")
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    auth_reset_password_ttl_minutes: int = Field(default=10, gt=0, alias="AUTH_RESET_PASSWORD_TTL_MINUTES")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -36,6 +46,53 @@ class Settings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
+
+    @field_validator("app_env")
+    @classmethod
+    def normalize_app_env(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("cors_origins")
+    @classmethod
+    def validate_cors_origins(cls, value: str) -> str:
+        origins = [origin.strip() for origin in value.split(",") if origin.strip()]
+        for origin in origins:
+            parsed = urlsplit(origin)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or "*" in origin
+            ):
+                raise ValueError("CORS_ORIGINS requires explicit HTTP(S) origins without paths or wildcards")
+        if not origins:
+            raise ValueError("At least one trusted frontend origin is required")
+        return ",".join(origins)
+
+    @model_validator(mode="after")
+    def validate_production_origins(self):
+        if self.app_env in {"production", "prod"}:
+            for value in (self.public_base_url, self.frontend_public_base_url):
+                parsed = urlsplit(value or "")
+                if (
+                    parsed.scheme != "https"
+                    or not parsed.hostname
+                    or parsed.username
+                    or parsed.password
+                    or parsed.path not in {"", "/"}
+                    or parsed.query
+                    or parsed.fragment
+                ):
+                    raise ValueError("Production requires explicit HTTPS backend and frontend origins")
+            if any(not origin.startswith("https://") for origin in self.cors_origin_list):
+                raise ValueError("Production CORS origins must use HTTPS")
+            if self.frontend_public_base_url.rstrip("/") not in self.cors_origin_list:
+                raise ValueError("The production frontend must be an explicitly trusted CORS origin")
+        return self
 
     @property
     def cors_origin_list(self) -> List[str]:

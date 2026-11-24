@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta, timezone
+import binascii
 import hashlib
 import hmac
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from app.core.config import get_settings
 from app.core.errors import NuvlyError
 from app.core.utils import new_id, utc_now_iso
 from app.modules.auth.email_service import AuthEmailService
+from app.modules.auth.google_identity import verify_google_credential
 from app.modules.auth.repository import AuthRepository
 from app.modules.auth.schemas import (
     ForgotPasswordRequest,
+    GoogleLoginRequest,
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
@@ -56,15 +59,20 @@ class AuthService:
 
     @staticmethod
     def _verify_password(password: str, stored_hash: str) -> bool:
+        if not isinstance(stored_hash, str):
+            return False
         try:
-            algorithm, iterations, salt_b64, digest_b64 = stored_hash.split("$", 3)
-        except ValueError:
+            algorithm, iterations_text, salt_b64, digest_b64 = stored_hash.split("$", 3)
+            iterations = int(iterations_text)
+            if algorithm != "pbkdf2_sha256" or not 1 <= iterations <= 2_000_000:
+                return False
+            salt = base64.b64decode(salt_b64, validate=True)
+            expected_digest = base64.b64decode(digest_b64, validate=True)
+            if len(salt) != PASSWORD_SALT_BYTES or len(expected_digest) != 32:
+                return False
+            actual_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        except ValueError, TypeError, binascii.Error:
             return False
-        if algorithm != "pbkdf2_sha256":
-            return False
-        salt = base64.b64decode(salt_b64.encode("ascii"))
-        expected_digest = base64.b64decode(digest_b64.encode("ascii"))
-        actual_digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
         return hmac.compare_digest(actual_digest, expected_digest)
 
     @staticmethod
@@ -108,7 +116,9 @@ class AuthService:
     ) -> dict[str, Any]:
         now = utc_now_iso()
         settings = get_settings()
-        session_ttl_days = self.session_ttl_days if self.session_ttl_days is not None else settings.auth_session_ttl_days
+        session_ttl_days = (
+            self.session_ttl_days if self.session_ttl_days is not None else settings.auth_session_ttl_days
+        )
         expires_at = self._utc_expires_at(session_ttl_days)
         token = secrets.token_urlsafe(48)
         self.repository.insert_session(
@@ -118,6 +128,7 @@ class AuthService:
                 "authProvider": auth_provider,
                 "authScope": auth_scope,
                 "tokenHash": self._hash_token(token),
+                "credentialsVersion": user.get("credentialsVersion"),
                 "active": True,
                 "createdAt": now,
                 "updatedAt": now,
@@ -136,63 +147,10 @@ class AuthService:
 
     def _build_reset_password_url(self, raw_token: str) -> str:
         settings = get_settings()
-        base_url = (settings.frontend_public_base_url or settings.public_base_url or "http://localhost:5173").rstrip("/")
+        base_url = (settings.frontend_public_base_url or settings.public_base_url or "http://localhost:5173").rstrip(
+            "/"
+        )
         return f"{base_url}/reset-password?token={raw_token}"
-
-    def ensure_internal_user(
-        self,
-        *,
-        email: str,
-        password: str,
-        name: str = "Nuvly",
-        internal_role: InternalRole = "admin",
-    ) -> dict[str, Any]:
-        normalized_email = self._normalize_email(email)
-        now = utc_now_iso()
-        existing = self.repository.find_user_by_email(normalized_email)
-        password_hash = self._hash_password(password)
-        provider_link = {
-            "email": normalized_email,
-            "passwordHash": password_hash,
-            "linkedAt": now,
-        }
-
-        if existing:
-            updated = dict(existing)
-            updated["name"] = name
-            updated["email"] = normalized_email
-            updated["emailNormalized"] = normalized_email
-            updated["accountType"] = "internal"
-            updated["internalRole"] = internal_role
-            updated["emailVerified"] = True
-            updated["active"] = True
-            auth_providers = list(updated.get("authProviders", []))
-            if "nuvly" not in auth_providers:
-                auth_providers.append("nuvly")
-            updated["authProviders"] = auth_providers
-            provider_links = dict(updated.get("providerLinks", {}))
-            provider_links["nuvly"] = provider_link
-            updated["providerLinks"] = provider_links
-            updated["updatedAt"] = now
-            self.repository.replace_user(updated["id"], updated)
-            return updated
-
-        document = {
-            "id": new_id("usr"),
-            "name": name,
-            "email": normalized_email,
-            "emailNormalized": normalized_email,
-            "accountType": "internal",
-            "internalRole": internal_role,
-            "emailVerified": True,
-            "active": True,
-            "authProviders": ["nuvly"],
-            "providerLinks": {"nuvly": provider_link},
-            "createdAt": now,
-            "updatedAt": now,
-            "lastLoginAt": None,
-        }
-        return self.repository.insert_user(document)
 
     def create_internal_user(
         self,
@@ -206,12 +164,30 @@ class AuthService:
         existing = self.repository.find_user_by_email(normalized_email)
         if existing:
             raise NuvlyError("Ya existe una cuenta registrada con ese email.", 409, "EMAIL_ALREADY_REGISTERED")
-        return self.ensure_internal_user(
-            email=normalized_email,
-            password=password,
-            name=name.strip(),
-            internal_role=internal_role,
-        )
+        now = utc_now_iso()
+        password_hash = self._hash_password(password)
+        provider_link = {
+            "email": normalized_email,
+            "passwordHash": password_hash,
+            "linkedAt": now,
+        }
+
+        document = {
+            "id": new_id("usr"),
+            "name": name.strip(),
+            "email": normalized_email,
+            "emailNormalized": normalized_email,
+            "accountType": "internal",
+            "internalRole": internal_role,
+            "emailVerified": True,
+            "active": True,
+            "authProviders": ["nuvly"],
+            "providerLinks": {"nuvly": provider_link},
+            "createdAt": now,
+            "updatedAt": now,
+            "lastLoginAt": None,
+        }
+        return self.repository.insert_user(document)
 
     def register(self, payload: RegisterRequest) -> dict[str, Any]:
         normalized_email = self._normalize_email(str(payload.email))
@@ -243,6 +219,115 @@ class AuthService:
     def login(self, payload: LoginRequest) -> dict[str, Any]:
         return self._login_with_account_type(payload, "customer")
 
+    def create_google_challenge(self) -> dict[str, str]:
+        client_id = (get_settings().google_client_id or "").strip()
+        if not client_id:
+            raise NuvlyError("El acceso con Google todavía no está disponible.", 503, "GOOGLE_AUTH_NOT_CONFIGURED")
+        token = secrets.token_urlsafe(32)
+        nonce = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+        self.repository.insert_google_challenge(
+            {
+                "tokenHash": self._hash_token(token),
+                "nonce": nonce,
+                "createdAt": now,
+                "expiresAt": now + timedelta(minutes=10),
+            }
+        )
+        return {"clientId": client_id, "nonce": nonce, "challengeToken": token}
+
+    def login_google(self, payload: GoogleLoginRequest) -> dict[str, Any]:
+        client_id = (get_settings().google_client_id or "").strip()
+        if not client_id:
+            raise NuvlyError("El acceso con Google todavía no está disponible.", 503, "GOOGLE_AUTH_NOT_CONFIGURED")
+        challenge = self.repository.consume_google_challenge(
+            self._hash_token(payload.challengeToken),
+            datetime.now(timezone.utc),
+        )
+        if not challenge:
+            raise NuvlyError("El acceso con Google expiró. Inténtalo nuevamente.", 401, "GOOGLE_CHALLENGE_EXPIRED")
+        claims = verify_google_credential(payload.credential, client_id)
+        subject = claims.get("sub")
+        email = claims.get("email")
+        nonce = claims.get("nonce")
+        if (
+            not isinstance(subject, str)
+            or not subject.strip()
+            or not isinstance(email, str)
+            or "@" not in email
+            or claims.get("email_verified") is not True
+            or not isinstance(nonce, str)
+            or not hmac.compare_digest(nonce, challenge["nonce"])
+        ):
+            raise NuvlyError(
+                "No pudimos verificar tu acceso con Google. Inténtalo nuevamente.", 401, "INVALID_GOOGLE_CREDENTIAL"
+            )
+
+        normalized_email = self._normalize_email(email)
+        user = self.repository.find_user_by_google_subject(subject)
+        if not user:
+            user = self.repository.find_user_by_email(normalized_email)
+            if user:
+                existing_subject = ((user.get("providerLinks") or {}).get("google") or {}).get("subject")
+                # Google is authoritative for Gmail and verified Workspace emails.
+                # Other existing accounts require explicit, authenticated linking.
+                authoritative_email = normalized_email.endswith("@gmail.com") or bool(claims.get("hd"))
+                if existing_subject and existing_subject != subject:
+                    raise NuvlyError(
+                        "Esta cuenta ya está vinculada a otra identidad de Google.", 409, "GOOGLE_ACCOUNT_CONFLICT"
+                    )
+                if not existing_subject and not authoritative_email:
+                    raise NuvlyError(
+                        "Ya tienes una cuenta con este correo. Ingresa con tu contraseña.",
+                        409,
+                        "GOOGLE_ACCOUNT_LINK_REQUIRED",
+                    )
+        now = utc_now_iso()
+        if user:
+            if user.get("accountType", "customer") != "customer":
+                raise NuvlyError("Usa el acceso del equipo para esta cuenta.", 403, "GOOGLE_CUSTOMER_ONLY")
+            if not user.get("active", True):
+                raise NuvlyError("La cuenta está desactivada.", 403, "USER_INACTIVE")
+            updated = dict(user)
+            providers = list(user.get("authProviders") or [])
+            if "google" not in providers:
+                providers.append("google")
+            updated.update(
+                {
+                    "authProviders": providers,
+                    "providerLinks": {
+                        **(user.get("providerLinks") or {}),
+                        "google": {
+                            "subject": subject,
+                            "email": normalized_email,
+                            "linkedAt": ((user.get("providerLinks") or {}).get("google") or {}).get("linkedAt", now),
+                        },
+                    },
+                    "emailVerified": True,
+                    "lastLoginAt": now,
+                    "updatedAt": now,
+                }
+            )
+            user = self.repository.link_google_identity(user["id"], updated["providerLinks"]["google"], now)
+        else:
+            user = self.repository.insert_user(
+                {
+                    "id": new_id("usr"),
+                    "name": (str(claims.get("name") or "").strip() or normalized_email.split("@", 1)[0])[:120],
+                    "email": normalized_email,
+                    "emailNormalized": normalized_email,
+                    "accountType": "customer",
+                    "emailVerified": True,
+                    "active": True,
+                    "authProviders": ["google"],
+                    "providerLinks": {"google": {"subject": subject, "email": normalized_email, "linkedAt": now}},
+                    "createdAt": now,
+                    "updatedAt": now,
+                    "lastLoginAt": now,
+                }
+            )
+        return self._create_session_response(user, auth_provider="google", auth_scope="customer")
+
     def login_internal(self, payload: LoginRequest) -> dict[str, Any]:
         return self._login_with_account_type(payload, "internal")
 
@@ -256,15 +341,14 @@ class AuthService:
         if user.get("accountType", "customer") != expected_account_type:
             raise NuvlyError("Email o contraseña incorrectos.", 401, "INVALID_CREDENTIALS")
 
-        provider_data = ((user.get("providerLinks") or {}).get("nuvly") or {})
+        provider_data = (user.get("providerLinks") or {}).get("nuvly") or {}
         stored_hash = provider_data.get("passwordHash")
         if not stored_hash or not self._verify_password(payload.password, stored_hash):
             raise NuvlyError("Email o contraseña incorrectos.", 401, "INVALID_CREDENTIALS")
 
-        updated_user = dict(user)
-        updated_user["lastLoginAt"] = utc_now_iso()
-        updated_user["updatedAt"] = updated_user["lastLoginAt"]
-        user = self.repository.replace_user(user["id"], updated_user)
+        user = self.repository.record_password_login(user["id"], user.get("credentialsVersion"), utc_now_iso())
+        if user is None:
+            raise NuvlyError("Email o contraseña incorrectos.", 401, "INVALID_CREDENTIALS")
         return self._create_session_response(user, auth_scope=expected_account_type)
 
     def get_user_from_token(self, token: str, required_account_type: AuthScope | None = None) -> dict[str, Any]:
@@ -281,6 +365,10 @@ class AuthService:
             raise NuvlyError("Usuario de la sesion no encontrado.", 401, "SESSION_USER_NOT_FOUND")
         if not user.get("active", True):
             raise NuvlyError("La cuenta está desactivada.", 403, "USER_INACTIVE")
+        if session.get("credentialsVersion") != user.get("credentialsVersion"):
+            raise NuvlyError("Sesion invalida o expirada.", 401, "INVALID_SESSION")
+        if session.get("authScope", "customer") != user.get("accountType", "customer"):
+            raise NuvlyError("No tienes permisos para acceder a este recurso.", 403, "AUTH_SCOPE_FORBIDDEN")
         if required_account_type and user.get("accountType", "customer") != required_account_type:
             raise NuvlyError("No tienes permisos para acceder a este recurso.", 403, "AUTH_SCOPE_FORBIDDEN")
         return self._to_user_response(user)
@@ -304,7 +392,9 @@ class AuthService:
             logger.info("Forgot password skipped | email=%s reason=user_not_found", normalized_email)
             return generic_response
         if not user.get("active", True):
-            logger.info("Forgot password skipped | email=%s userId=%s reason=user_inactive", normalized_email, user["id"])
+            logger.info(
+                "Forgot password skipped | email=%s userId=%s reason=user_inactive", normalized_email, user["id"]
+            )
             return generic_response
 
         now = utc_now_iso()
@@ -319,15 +409,20 @@ class AuthService:
                 "userId": user["id"],
                 "email": user["email"],
                 "tokenHash": self._hash_token(raw_token),
+                "credentialsVersion": user.get("credentialsVersion"),
                 "createdAt": now,
                 "updatedAt": now,
                 "expiresAt": expires_at,
                 "usedAt": None,
             }
         )
-        logger.info("Password reset token stored | userId=%s email=%s expiresAt=%s", user["id"], user["email"], expires_at)
+        logger.info(
+            "Password reset token stored | userId=%s email=%s expiresAt=%s", user["id"], user["email"], expires_at
+        )
         reset_url = self._build_reset_password_url(raw_token)
-        logger.info("Password reset token generated | userId=%s email=%s expiresAt=%s", user["id"], user["email"], expires_at)
+        logger.info(
+            "Password reset token generated | userId=%s email=%s expiresAt=%s", user["id"], user["email"], expires_at
+        )
         logger.info("Password reset email dispatch started | userId=%s email=%s", user["id"], user["email"])
         self.email_service.send_password_reset_email(user["email"], reset_url)
         logger.info("Password reset flow completed | userId=%s email=%s", user["id"], user["email"])
@@ -347,6 +442,8 @@ class AuthService:
         if not user:
             raise NuvlyError("Usuario no encontrado para el token de recuperacion.", 404, "USER_NOT_FOUND")
 
+        if token_document.get("credentialsVersion") != user.get("credentialsVersion"):
+            raise NuvlyError("Token de recuperacion invalido o expirado.", 400, "INVALID_RESET_TOKEN")
         now = utc_now_iso()
         updated_user = dict(user)
         provider_links = dict(updated_user.get("providerLinks") or {})
@@ -356,11 +453,19 @@ class AuthService:
         nuvly_provider["linkedAt"] = nuvly_provider.get("linkedAt") or now
         provider_links["nuvly"] = nuvly_provider
         updated_user["providerLinks"] = provider_links
+        updated_user["credentialsVersion"] = secrets.token_urlsafe(24)
         updated_user["authProviders"] = sorted(set((updated_user.get("authProviders") or []) + ["nuvly"]))
         updated_user["updatedAt"] = now
-        self.repository.replace_user(updated_user["id"], updated_user)
-
-        token_document["usedAt"] = now
-        token_document["updatedAt"] = now
-        self.repository.replace_password_reset_token(token_document["id"], token_document)
+        # Claim before mutating the password: simultaneous reuse must have one winner.
+        if not self.repository.consume_password_reset_token(token_document["id"], now):
+            raise NuvlyError("Token de recuperacion invalido o expirado.", 400, "INVALID_RESET_TOKEN")
+        if not self.repository.update_password_credentials(
+            user["id"],
+            user.get("credentialsVersion"),
+            nuvly_provider,
+            updated_user["authProviders"],
+            updated_user["credentialsVersion"],
+            now,
+        ):
+            raise NuvlyError("Token de recuperacion invalido o expirado.", 400, "INVALID_RESET_TOKEN")
         return {"ok": True}

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.catalog import PlanTier, ProductType, TemplateCategoryCode, VariantLevel
+from app.core.value_types import CLPAmount
 
 CurrencyCode = Literal["CLP"]
 PriceUnit = Literal["component"]
@@ -16,9 +17,9 @@ class PricingPlanBase(BaseModel):
     tier: PlanTier
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
-    basePrice: int = Field(ge=0)
-    basePriceMonthly: int | None = Field(default=None, ge=0)
-    basePriceYearly: int | None = Field(default=None, ge=0)
+    basePrice: CLPAmount = Field(ge=0)
+    basePriceMonthly: CLPAmount | None = Field(default=None, ge=0)
+    basePriceYearly: CLPAmount | None = Field(default=None, ge=0)
     durationMonths: int = Field(ge=0)
     currency: CurrencyCode = "CLP"
     active: bool = True
@@ -44,6 +45,8 @@ class PricingPlanResponse(PricingPlanBase):
 
 
 class PricingComponentVariant(BaseModel):
+    pricingMode: Literal["included", "extra"] | None = None
+    availableFromPlan: Literal["plus", "pro", "custom"] | None = None
     variantCode: str = Field(min_length=1, max_length=160)
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
@@ -51,7 +54,7 @@ class PricingComponentVariant(BaseModel):
     active: bool = True
     includedInPlans: List[PlanTier] = Field(default_factory=list)
     canBeExtraInPlans: List[PlanTier] = Field(default_factory=list)
-    extraPrice: int = Field(default=0, ge=0)
+    extraPrice: CLPAmount = Field(default=0, ge=0)
     currency: CurrencyCode = "CLP"
     sortOrder: int = Field(default=1, ge=0)
     model_config = ConfigDict(extra="allow")
@@ -99,7 +102,7 @@ class PricingComponentResponse(PricingComponentBase):
 class PricingSummaryMatrixCell(BaseModel):
     status: SummaryVariantStatus
     label: str
-    extraPrice: Optional[int] = None
+    extraPrice: Optional[CLPAmount] = None
 
 
 class PricingSummaryVariant(BaseModel):
@@ -108,7 +111,7 @@ class PricingSummaryVariant(BaseModel):
     description: str = ""
     variantTier: VariantLevel
     active: bool = True
-    extraPrice: int = 0
+    extraPrice: CLPAmount = 0
     currency: CurrencyCode = "CLP"
     matrix: Dict[str, PricingSummaryMatrixCell] = Field(default_factory=dict)
 
@@ -118,9 +121,9 @@ class PricingSummaryPlan(BaseModel):
     code: str
     tier: PlanTier
     name: str
-    basePrice: int
-    basePriceMonthly: int | None = None
-    basePriceYearly: int | None = None
+    basePrice: CLPAmount
+    basePriceMonthly: CLPAmount | None = None
+    basePriceYearly: CLPAmount | None = None
     currency: CurrencyCode
     includedCount: int
     extraCount: int
@@ -181,7 +184,7 @@ class CatalogComponentVariantResponse(BaseModel):
     lockLabel: str
     label: str
     active: bool = True
-    extraPrice: int | None = None
+    extraPrice: CLPAmount | None = None
     currency: CurrencyCode = "CLP"
     locked: bool
     lockReason: str = ""
@@ -235,7 +238,7 @@ class PricingBreakdownItem(BaseModel):
 
 class PricingCalculateResponse(BaseModel):
     currency: CurrencyCode
-    basePrice: int
+    basePrice: CLPAmount
     componentExtrasTotal: int
     extrasTotal: int
     total: int

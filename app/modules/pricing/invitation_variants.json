@@ -1,0 +1,309 @@
+{
+  "hero": [
+    {
+      "code": "I-Essentials-Classic",
+      "name": "Essentials Classic",
+      "tier": "core"
+    },
+    {
+      "code": "I1-Classic-Hero",
+      "name": "Cinematic Layered",
+      "tier": "advanced"
+    },
+    {
+      "code": "I2-Split-Hero",
+      "name": "Structural Grid",
+      "tier": "advanced"
+    },
+    {
+      "code": "I3-Editorial-Hero",
+      "name": "Die-Cut Shape",
+      "tier": "advanced"
+    },
+    {
+      "code": "I4-Brutalist-Typography",
+      "name": "Heavy Billboard",
+      "tier": "advanced"
+    },
+    {
+      "code": "I5-Mask-Hero",
+      "name": "Text Mask Video",
+      "tier": "advanced"
+    }
+  ],
+  "story": [
+    {
+      "code": "S-Essentials-Book",
+      "name": "Essentials Book",
+      "tier": "core"
+    },
+    {
+      "code": "S1-Editorial-Story",
+      "name": "Revealing Story",
+      "tier": "advanced"
+    },
+    {
+      "code": "S2-Photo-Story",
+      "name": "Floating Keywords",
+      "tier": "advanced"
+    },
+    {
+      "code": "S3-Side-Story",
+      "name": "Interactive Highlight",
+      "tier": "advanced"
+    },
+    {
+      "code": "S4-Typographic-Scroller",
+      "name": "Typographic Scroller",
+      "tier": "advanced"
+    },
+    {
+      "code": "S5-Text-Mask-Video",
+      "name": "Text Mask Video",
+      "tier": "advanced"
+    },
+    {
+      "code": "S6-Mask-Video",
+      "name": "Kinetic Text Mask",
+      "tier": "advanced"
+    }
+  ],
+  "countdown": [
+    {
+      "code": "C-Essentials-Static",
+      "name": "Essentials Static",
+      "tier": "core"
+    },
+    {
+      "code": "C1-Minimal-Countdown",
+      "name": "Minimal Numbers",
+      "tier": "advanced"
+    },
+    {
+      "code": "C2-Card-Countdown",
+      "name": "Classic Flip Cards",
+      "tier": "advanced"
+    },
+    {
+      "code": "C3-Bold-Countdown",
+      "name": "Botanical Progress Circles",
+      "tier": "advanced"
+    },
+    {
+      "code": "C4-Odometer-Ticker",
+      "name": "Split-Second Ticker",
+      "tier": "advanced"
+    }
+  ],
+  "details": [
+    {
+      "code": "D-Essentials-List",
+      "name": "Essentials List",
+      "tier": "core"
+    },
+    {
+      "code": "D1-Grid-Details",
+      "name": "Editorial Columns",
+      "tier": "advanced"
+    },
+    {
+      "code": "D2-Panel-Details",
+      "name": "Checklist Cards",
+      "tier": "advanced"
+    },
+    {
+      "code": "D3-Timeline-Details",
+      "name": "Access Board",
+      "tier": "advanced"
+    },
+    {
+      "code": "D4-Organic-Details",
+      "name": "Organic Panels",
+      "tier": "advanced"
+    },
+    {
+      "code": "D5-Spec-Board",
+      "name": "Technical Blueprint",
+      "tier": "advanced"
+    }
+  ],
+  "entertainment": [
+    {
+      "code": "E1-Playlist-Entertainment",
+      "name": "Audio Vibe",
+      "tier": "core"
+    },
+    {
+      "code": "E2-DressCode-Entertainment",
+      "name": "Moodboard Dress Code",
+      "tier": "advanced"
+    }
+  ],
+  "gallery": [
+    {
+      "code": "G-Essentials-Grid",
+      "name": "Essentials Grid",
+      "tier": "core"
+    },
+    {
+      "code": "G1-Masonry-Invitation",
+      "name": "Editorial Masonry",
+      "tier": "advanced"
+    },
+    {
+      "code": "G2-Strip-Invitation",
+      "name": "Infinite Loop Carousel",
+      "tier": "advanced"
+    },
+    {
+      "code": "G3-Editorial-Invitation",
+      "name": "Polaroid Stack",
+      "tier": "advanced"
+    },
+    {
+      "code": "G4-Draggable-Canvas",
+      "name": "Interactive Moodboard",
+      "tier": "advanced"
+    }
+  ],
+  "timeline": [
+    {
+      "code": "T-Essentials-Vertical",
+      "name": "Essentials Vertical",
+      "tier": "core"
+    },
+    {
+      "code": "T1-Vertical-Timeline",
+      "name": "Vertical Editorial",
+      "tier": "advanced"
+    },
+    {
+      "code": "T2-Steps-Timeline",
+      "name": "Lineup Strip",
+      "tier": "advanced"
+    },
+    {
+      "code": "T3-Cards-Timeline",
+      "name": "Soft Steps",
+      "tier": "advanced"
+    },
+    {
+      "code": "T4-Horizontal-Marquee",
+      "name": "The Event Lineup",
+      "tier": "advanced"
+    }
+  ],
+  "map": [
+    {
+      "code": "M-Essentials-Static",
+      "name": "Essentials Static",
+      "tier": "core"
+    },
+    {
+      "code": "M1-Card-Map",
+      "name": "Glass Card Map",
+      "tier": "advanced"
+    },
+    {
+      "code": "M2-Split-Map",
+      "name": "Overlay Directions Map",
+      "tier": "advanced"
+    },
+    {
+      "code": "M3-Editorial-Map",
+      "name": "Floating Capsule Map",
+      "tier": "advanced"
+    },
+    {
+      "code": "M4-HUD-Compass",
+      "name": "Radar Navigation",
+      "tier": "advanced"
+    }
+  ],
+  "faq": [
+    {
+      "code": "F-Essentials-Flat",
+      "name": "Essentials Flat",
+      "tier": "core"
+    },
+    {
+      "code": "F1-Accordion-FAQ",
+      "name": "Accordion FAQ",
+      "tier": "advanced"
+    },
+    {
+      "code": "F2-Cards-FAQ",
+      "name": "Highlight Cards FAQ",
+      "tier": "advanced"
+    },
+    {
+      "code": "F3-Minimal-FAQ",
+      "name": "Minimal FAQ",
+      "tier": "advanced"
+    },
+    {
+      "code": "F4-Split-Glossary",
+      "name": "Asymmetric Inquiry",
+      "tier": "advanced"
+    }
+  ],
+  "rsvp": [
+    {
+      "code": "R-Essentials-Direct",
+      "name": "Essentials Direct",
+      "tier": "core"
+    },
+    {
+      "code": "R1-Form-RSVP",
+      "name": "Editorial Form RSVP",
+      "tier": "advanced"
+    },
+    {
+      "code": "R2-Panel-RSVP",
+      "name": "Panel Confirmation RSVP",
+      "tier": "advanced"
+    },
+    {
+      "code": "R3-Minimal-RSVP",
+      "name": "Minimal Sheet RSVP",
+      "tier": "advanced"
+    },
+    {
+      "code": "R4-Step-Sliding",
+      "name": "Micro-Funnel RSVP",
+      "tier": "advanced"
+    }
+  ],
+  "footer": [
+    {
+      "code": "FT-Essentials-Signoff",
+      "name": "Essentials Signoff",
+      "tier": "core"
+    },
+    {
+      "code": "FT1-Soft-Footer",
+      "name": "Editorial Signoff",
+      "tier": "advanced"
+    },
+    {
+      "code": "FT2-Photo-Footer",
+      "name": "Polaroid Collage Footer",
+      "tier": "advanced"
+    },
+    {
+      "code": "FT3-Bold-Footer",
+      "name": "QR Ticket Footer",
+      "tier": "advanced"
+    },
+    {
+      "code": "FT4-Botanical-Footer",
+      "name": "Botanical Note Footer",
+      "tier": "advanced"
+    },
+    {
+      "code": "FT5-Cinematic-Credits",
+      "name": "The Outro Rolling",
+      "tier": "advanced"
+    }
+  ]
+}

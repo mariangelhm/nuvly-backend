@@ -3,18 +3,27 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
+import pytest
+
 from app.core.config import get_settings
-from app.modules.domain.schemas import CustomerData, CustomerProjectCreate, WebsiteTemplateCreate, InvitationTemplateCreate
+from app.core.errors import NuvlyError
+from app.modules.domain.schemas import (
+    CustomerData,
+    CustomerProjectCreate,
+    InvitationTemplateCreate,
+    WebsiteTemplateCreate,
+)
 from app.modules.domain.services import (
     CUSTOMER_INVITATION_CONFIG,
     CUSTOMER_WEBSITE_CONFIG,
     INVITATION_TEMPLATE_CONFIG,
-    CustomerProjectService,
     WEBSITE_TEMPLATE_CONFIG,
+    CustomerProjectService,
     TemplateService,
 )
-from app.modules.payments.schemas import CreateCheckoutRequest, PaymentWebhookPayload
+from app.modules.payments.schemas import CheckoutPreviewRequest, CreateCheckoutRequest, PaymentWebhookPayload
 from app.modules.payments.service import PaymentService
+from app.modules.payments.terms import WEBSITE_TERMS
 from app.modules.pricing.service import ensure_pricing_seed
 
 
@@ -28,11 +37,48 @@ def _get_nested(document: Dict[str, Any], dotted_key: str) -> Any:
 
 
 class InMemoryDomainRepository:
+    def discard_unpublished_snapshot(self, collection_name, snapshot_id):
+        self.collections[collection_name] = [
+            s for s in self.collections.get(collection_name, []) if s["id"] != snapshot_id
+        ]
+
     def __init__(self) -> None:
         self.collections: dict[str, list[dict[str, Any]]] = {}
 
     def database_name(self) -> str:
         return "in-memory"
+
+    def enqueue_payment_email(self, document):
+        existing = self.find_document("payment_receipt_emails", {"id": document["id"]})
+        return existing or self.insert_document("payment_receipt_emails", document, "duplicate")
+
+    def claim_payment_email(self, payment_id, now, lease_id, lease_until):
+        record = self.find_document("payment_receipt_emails", {"id": payment_id})
+        if not record:
+            return None
+        claimable = record["status"] in ("pending", "failed", "unavailable") and record["nextAttemptAt"] <= now
+        claimable = claimable or (record["status"] == "sending" and record["leaseUntil"] <= now)
+        if not claimable:
+            return None
+        return self.update_document_fields(
+            "payment_receipt_emails",
+            payment_id,
+            {
+                "status": "sending",
+                "leaseId": lease_id,
+                "leaseUntil": lease_until,
+                "lastAttemptAt": now,
+                "attempts": record.get("attempts", 0) + 1,
+            },
+            "missing",
+            "missing",
+        )
+
+    def finish_payment_email(self, payment_id, lease_id, updates):
+        record = self.find_document("payment_receipt_emails", {"id": payment_id})
+        if record and record.get("leaseId") == lease_id and record["status"] == "sending":
+            return self.update_document_fields("payment_receipt_emails", payment_id, updates, "missing", "missing")
+        return record
 
     def insert_document(
         self,
@@ -53,7 +99,11 @@ class InMemoryDomainRepository:
         sort_field: str = "updatedAt",
         sort_direction: int = -1,
     ) -> list[Dict[str, Any]]:
-        documents = [deepcopy(document) for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        documents = [
+            deepcopy(document)
+            for document in self.collections.get(collection_name, [])
+            if self._matches(document, filters)
+        ]
         documents.sort(key=lambda document: _get_nested(document, sort_field), reverse=sort_direction == -1)
         documents = documents[skip:]
         if limit > 0:
@@ -78,16 +128,21 @@ class InMemoryDomainRepository:
         not_found_code: str,
         duplicate_message: str,
         duplicate_code: str = "DUPLICATED_SLUG",
+        expected_updated_at: str | None = None,
     ) -> Dict[str, Any]:
         documents = self.collections.get(collection_name, [])
         for index, current in enumerate(documents):
             if current.get("id") == document_id:
+                if expected_updated_at is not None and current.get("updatedAt") != expected_updated_at:
+                    raise NuvlyError("Concurrent update", 409, "PROJECT_VERSION_CONFLICT")
                 documents[index] = deepcopy(document)
                 return deepcopy(document)
         raise AssertionError(f"Document not found in test repository: {collection_name}/{document_id}")
 
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
-        return len([document for document in self.collections.get(collection_name, []) if self._matches(document, filters)])
+        return len(
+            [document for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        )
 
     def update_document_fields(
         self,
@@ -126,7 +181,17 @@ def _website_payload() -> Dict[str, Any]:
         "experienceType": "web",
         "styles": {"themeId": "sunrise"},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [
+            {
+                "id": "blk_hero",
+                "type": "hero",
+                "variant": "H1",
+                "enabled": True,
+                "order": 1,
+                "props": {},
+                "settings": {},
+            }
+        ],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
         "metadata": {"category": "landing", "coverImage": "/assets/cover.jpg", "tags": ["agency"], "basePrice": 149},
         "websiteData": {"industry": "creative-services", "businessName": "Buildframe"},
@@ -142,9 +207,24 @@ def _invitation_payload() -> Dict[str, Any]:
         "templateCategory": "wedding",
         "styles": {"themeId": "sunrise"},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "hero-a", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [
+            {
+                "id": "blk_hero",
+                "type": "hero",
+                "variant": "hero-a",
+                "enabled": True,
+                "order": 1,
+                "props": {},
+                "settings": {},
+            }
+        ],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
-        "metadata": {"category": "wedding", "coverImage": "/assets/cover.jpg", "tags": ["wedding"], "basePrice": 120000},
+        "metadata": {
+            "category": "wedding",
+            "coverImage": "/assets/cover.jpg",
+            "tags": ["wedding"],
+            "basePrice": 120000,
+        },
         "invitationData": {"eventType": "wedding", "coupleNames": ["Lara", "Mati"]},
     }
 
@@ -201,7 +281,13 @@ def test_create_checkout_sets_project_to_pending_payment_and_creates_payment() -
     service = PaymentService(repository=repository)
 
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago")
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+        )
     )
 
     stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
@@ -218,13 +304,44 @@ def test_create_checkout_sets_project_to_pending_payment_and_creates_payment() -
     assert stored_project["statusHistory"][-1]["status"] == "pending_payment"
 
 
+def test_immersive_video_extra_is_added_to_checkout_amount() -> None:
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    project["selectedComponentExtras"] = [
+        {
+            "componentCode": "immersiveVideo",
+            "variantCode": "VIP1-Cinematic-Theater-Modal",
+            "extraPrice": 3990,
+        }
+    ]
+    repository.replace_document(
+        CUSTOMER_WEBSITE_CONFIG.collection,
+        project["id"],
+        project,
+        CUSTOMER_WEBSITE_CONFIG.not_found_message,
+        CUSTOMER_WEBSITE_CONFIG.not_found_code,
+        CUSTOMER_WEBSITE_CONFIG.duplicate_message,
+    )
+    service = PaymentService(repository=repository)
+    preview = service.preview_checkout(CheckoutPreviewRequest(projectType="website", projectId=project["id"]))
+
+    assert preview["extrasTotal"] == 3990
+    assert preview["amount"] == preview["basePrice"] + 3990
+
+
 def test_create_checkout_uses_request_host_url_when_public_base_url_missing() -> None:
     repository = InMemoryDomainRepository()
     project = _create_customer_project(repository)
     service = PaymentService(repository=repository)
 
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+        ),
         base_url="https://www.nuvlystudio.com",
     )
 
@@ -239,6 +356,8 @@ def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_c
 
     payment = service.create_checkout(
         CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
             projectType="website",
             projectId=project["id"],
             provider="mercadopago",
@@ -251,7 +370,7 @@ def test_create_checkout_with_custom_domain_adds_surcharge_and_persists_domain_c
     assert payment["withCustomDomain"] is True
     assert payment["customDomain"] == "www.buildframe.cl"
     assert payment["customDomainSurcharge"] == 15000
-    assert payment["amount"] == 15149
+    assert payment["amount"] == 114900
     assert "dominio propio" in payment["domainOptionExplanation"].lower()
     assert stored_project is not None
     assert stored_project["customDomain"] == "www.buildframe.cl"
@@ -281,6 +400,8 @@ def test_create_checkout_applies_percentage_discount_code() -> None:
 
     payment = service.create_checkout(
         CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
             projectType="website",
             projectId=project["id"],
             provider="mercadopago",
@@ -289,13 +410,13 @@ def test_create_checkout_applies_percentage_discount_code() -> None:
     )
 
     stored_project = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
-    assert payment["subtotalAmount"] == 149
-    assert payment["discountAmount"] == 15
-    assert payment["amount"] == 134
+    assert payment["subtotalAmount"] == 99900
+    assert payment["discountAmount"] == 9990
+    assert payment["amount"] == 89910
     assert payment["discountCode"] == "NUVLY10"
     assert stored_project is not None
     assert stored_project["payment"]["discountCode"] == "NUVLY10"
-    assert stored_project["payment"]["discountAmount"] == 15
+    assert stored_project["payment"]["discountAmount"] == 9990
 
 
 def test_preview_checkout_applies_discount_code_and_returns_recalculated_total() -> None:
@@ -334,9 +455,9 @@ def test_preview_checkout_applies_discount_code_and_returns_recalculated_total()
         )()
     )
 
-    assert preview["subtotalAmount"] == 149
-    assert preview["discountAmount"] == 15
-    assert preview["amount"] == 134
+    assert preview["subtotalAmount"] == 99900
+    assert preview["discountAmount"] == 9990
+    assert preview["amount"] == 89910
     assert preview["discountCode"] == "NUVLY10"
 
 
@@ -365,6 +486,8 @@ def test_create_checkout_rejects_discount_code_for_wrong_project_type() -> None:
     try:
         service.create_checkout(
             CreateCheckoutRequest(
+                termsAccepted=True,
+                termsVersion=WEBSITE_TERMS["version"],
                 projectType="invitation",
                 projectId=project["id"],
                 provider="mercadopago",
@@ -385,7 +508,13 @@ def test_approved_webhook_uses_checkout_base_url_for_public_website_url() -> Non
     get_settings().frontend_public_base_url = None
 
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="transbank"),
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="transbank",
+        ),
         base_url="https://www.nuvlystudio.com",
     )
 
@@ -405,7 +534,13 @@ def test_approved_webhook_marks_payment_paid_and_project_paid() -> None:
     service = PaymentService(repository=repository)
     get_settings.cache_clear()
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="transbank")
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="transbank",
+        )
     )
 
     updated_payment = service.process_webhook(
@@ -430,6 +565,8 @@ def test_approved_webhook_with_custom_domain_does_not_auto_publish_or_return_nuv
     service = PaymentService(repository=repository)
     payment = service.create_checkout(
         CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
             projectType="website",
             projectId=project["id"],
             provider="transbank",
@@ -456,7 +593,13 @@ def test_failed_webhook_marks_payment_failed_and_project_payment_failed() -> Non
     project = _create_customer_project(repository)
     service = PaymentService(repository=repository)
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago")
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+        )
     )
 
     updated_payment = service.process_webhook(
@@ -480,7 +623,13 @@ def test_manual_confirmation_endpoint_returns_final_website_url() -> None:
     get_settings().public_base_url = None
     get_settings().frontend_public_base_url = None
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+        ),
         base_url="https://www.nuvlystudio.com",
     )
 
@@ -500,7 +649,13 @@ def test_manual_confirmation_endpoint_returns_final_invitation_url() -> None:
     get_settings().public_base_url = None
     get_settings().frontend_public_base_url = None
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="invitation", projectId=project["id"], provider="mercadopago"),
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="invitation",
+            projectId=project["id"],
+            provider="mercadopago",
+        ),
         base_url="https://www.nuvlystudio.com",
     )
 
@@ -521,7 +676,13 @@ def test_checkout_and_final_urls_prefer_frontend_public_base_url() -> None:
     get_settings().frontend_public_base_url = "https://www.nuvlystudio.com"
 
     payment = service.create_checkout(
-        CreateCheckoutRequest(projectType="website", projectId=project["id"], provider="mercadopago"),
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="mercadopago",
+        ),
         base_url="https://internal-backend.example",
     )
     confirmation = service.confirm_payment_manually(payment["id"], "mercadopago")
@@ -529,3 +690,37 @@ def test_checkout_and_final_urls_prefer_frontend_public_base_url() -> None:
     assert payment["checkoutUrl"].startswith("https://www.nuvlystudio.com/checkout/mercadopago/")
     assert payment["checkoutBaseUrl"] == "https://www.nuvlystudio.com"
     assert confirmation["finalUrl"] == f"https://www.nuvlystudio.com/{project['id']}/buildframe-lara"
+
+
+@pytest.mark.parametrize("tier,annual,monthly", [("plus", 99900, 9990), ("pro", 199900, 19990)])
+def test_website_checkout_charges_first_year_and_preserves_renewal_terms(tier, annual, monthly):
+    repository = InMemoryDomainRepository()
+    project = _create_customer_project(repository)
+    stored = repository.collections[CUSTOMER_WEBSITE_CONFIG.collection][0]
+    stored["planTier"] = tier
+    # A stale monthly price in a draft must never become the first-year charge.
+    stored["metadata"]["basePrice"] = monthly
+    service = PaymentService(repository=repository)
+    preview = service.preview_checkout(CheckoutPreviewRequest(projectType="website", projectId=project["id"]))
+    assert preview["basePrice"] == annual
+    assert preview["amount"] == annual
+    assert preview["billingTerms"] == {
+        "initialMonths": 12,
+        "initialAmount": annual,
+        "renewalAmount": monthly,
+        "renewalPeriod": "monthly",
+        "renewalStartsMonth": 13,
+    }
+    payment = service.create_checkout(
+        CreateCheckoutRequest(
+            termsAccepted=True,
+            termsVersion=WEBSITE_TERMS["version"],
+            projectType="website",
+            projectId=project["id"],
+            provider="transbank",
+        )
+    )
+    assert payment["amount"] == preview["amount"]
+    assert payment["billingTerms"] == preview["billingTerms"]
+    updated = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
+    assert updated["payment"]["billingTerms"] == preview["billingTerms"]

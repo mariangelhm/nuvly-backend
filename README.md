@@ -2,45 +2,37 @@
 
 Backend MVP para el Studio de Nuvly.
 
-## Inicio rápido
+Para activar **Continuar con Google**, consulta [GOOGLE_AUTH_SETUP.md](GOOGLE_AUTH_SETUP.md).
 
-PowerShell:
+## Verificación y operación
+
+La instalación utiliza `requirements-lock.txt` y `requirements-dev-lock.txt` mediante los constraints de requirements. No copies un entorno virtual entre computadoras. Para instalar las herramientas de prueba:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload
-
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
-- Los usuarios internos tienen dos perfiles: `admin` y `developer`.
-- Solo un `admin` puede crear usuarios internos desde `POST /api/admin/studio/users`.
+.\.venv\Scripts\python.exe -m pip install --upgrade "pip>=26.3"
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -B scripts/test_offline.py
 ```
 
-cmd:
+El runner usa fixtures y un directorio temporal, bloquea conexiones de red y no inicia el servidor contra Mongo real. Los locks se verificaron localmente en Python 3.14.5 Windows; el workflow prueba la instalación Linux cuando se ejecute en GitHub.
 
-```cmd
-python -m venv .venv
-.venv\Scripts\activate.bat
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-python -m uvicorn app.main:app --reload
+Guías operativas: [contratos y concurrencia](docs/api-contracts.md), [paginación](docs/customer-product-pagination.md), [uploads durables](docs/media-storage.md), [límites antiabuso](docs/abuse-limits.md) y [activación de Webpay](docs/production-payments.md). Las variables del entorno están en `.env.example`; los secretos se configuran fuera del repositorio.
 
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
+Antes de promover una versión, verificar en staging TLS de Mongo, índices, restore de backups/assets, dos sesiones guardando el mismo borrador, aislamiento de clientes y retorno de pago. Conservar artefacto y configuración anteriores para rollback. Deshabilitar cobros nuevos antes de revertir un adaptador de pago; no eliminar pagos, snapshots ni uploads durante la reversión. Verificar compatibilidad de datos antes de revertir código que cambie esquemas. Los tests locales no habilitan producción automáticamente.
+
+## Inicio rápido (entorno ya instalado)
+
+Desde PowerShell, en la raíz del proyecto:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-Swagger:
+Abre http://127.0.0.1:8000/api/docs. Detén el servidor con `Ctrl+C`.
+También puedes ejecutar `.\run.ps1`.
 
-```txt
-http://127.0.0.1:8000/api/docs
-```
+Para instalar desde cero o reparar un entorno copiado, sigue los pasos siguientes.
 
 Este servicio guarda, valida, publica y sirve templates y proyectos visuales para:
 
@@ -170,357 +162,185 @@ nuvly-backend/
 
 ---
 
-# 1. Requisitos
+# Instalación paso a paso en Windows (PowerShell)
 
-Verifica tu versión en la terminal que uses.
+## 1. Abrir la carpeta del proyecto
 
-PowerShell:
-
-```powershell
-python --version
-```
-
-cmd:
-
-```cmd
-python --version
-```
-
-Debe salir algo como:
-
-```txt
-Python 3.14.5
-```
-
----
-
-# 2. Crear entorno virtual
-
-En la raíz del proyecto:
-
-PowerShell:
+Abre una terminal PowerShell en la raíz, donde están `requirements.txt` y `app`.
+En este equipo:
 
 ```powershell
-python -m venv .venv
+Set-Location C:\Users\Mari\Documents\nuvly-backend-python314
 ```
 
-cmd:
+## 2. Instalar Python 3.14.5
 
-```cmd
-python -m venv .venv
-```
+El proyecto usa la versión de `.python-version`: **3.14.5**.
+El comando `python` del sistema puede seguir apuntando a otra versión.
 
-Activar en Windows PowerShell:
+En este equipo ya está instalado `uv`. Para instalar el Python requerido:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+uv python install 3.14.5
 ```
 
-Activar en `cmd`:
+Si no tienes `uv`, instala Python 3.14.5 desde [Python.org](https://www.python.org/downloads/release/python-3145/)
+y usa `py -3.14 -m venv .venv` en el siguiente paso, en lugar de `uv venv`.
 
-```cmd
-.venv\Scripts\activate.bat
-```
+## 3. Crear o reparar el entorno virtual
 
-Si PowerShell bloquea la activación:
+Solo para la primera instalación:
 
 ```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+uv venv --python 3.14.5 .venv
 ```
 
-Luego cierra y abre la terminal otra vez y ejecuta:
+Si `.venv` ya funciona, omite su creación. Los entornos virtuales dependen del Python
+y de las rutas del equipo donde se crearon: debes recrearlos si copiaste la carpeta.
+Si aparece `did not find executable at 'D:\python\python.exe'`, detén el servidor,
+abre una terminal nueva y conserva el entorno roto antes de crear otro:
 
 ```powershell
-.\.venv\Scripts\Activate.ps1
+Rename-Item -Path .venv -NewName ('.venv-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+uv venv --python 3.14.5 .venv
 ```
 
-Cuando el entorno quede activo, verás algo como:
-
-```txt
-(.venv) C:\ruta\al\proyecto>
-```
-
----
-
-# 3. Actualizar herramientas de instalación
-
-Esto es importante para Python 3.14.5.
-
-PowerShell:
+Comprueba la versión del entorno:
 
 ```powershell
-python -m pip install --upgrade pip setuptools wheel
+.\.venv\Scripts\python.exe --version
 ```
 
-cmd:
+Debe mostrar `Python 3.14.5`. En la reparación de este equipo, el respaldo quedó en
+`.venv-backup-python314`. Los respaldos están excluidos de Git.
 
-```cmd
-python -m pip install --upgrade pip setuptools wheel
-```
+## 4. Instalar dependencias
 
----
-
-# 4. Instalar dependencias
-
-PowerShell:
+Usa siempre el ejecutable del entorno para instalar y ejecutar:
 
 ```powershell
-pip install -r requirements.txt
-```
-
-cmd:
-
-```cmd
-pip install -r requirements.txt
-```
-
-Si aparece error con `pydantic-core`, primero verifica que `requirements.txt` use versiones compatibles con Python 3.14.5, por ejemplo:
-
-```txt
-fastapi>=0.119.0
-uvicorn[standard]>=0.37.0
-pydantic>=2.12.0
-pydantic-settings>=2.11.0
-```
-
-Luego limpia caché y reinstala.
-
-PowerShell:
-
-```powershell
-pip cache purge
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
-
-cmd:
-
-```cmd
-pip cache purge
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
-
-Si quieres evitar depender de la activación del entorno virtual, también puedes usar el ejecutable directo del entorno.
-
-PowerShell:
-
-```powershell
+.\.venv\Scripts\python.exe -m ensurepip --upgrade
+.\.venv\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip check
 ```
 
-cmd:
+El último comando debe mostrar `No broken requirements found.`.
 
-```cmd
-.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+## 5. Configurar MongoDB y el archivo .env
 
-Si el error menciona `link.exe not found`, te faltan compiladores de Windows y debes instalar `Visual Studio Build Tools` con la carga `Desktop development with C++`.
-
----
-
-# 4.1. Levantar el backend localmente
-
-Con el entorno ya activo:
-
-PowerShell:
+Si `.env` ya existe, conserva su configuración. Si todavía no existe:
 
 ```powershell
-python -m uvicorn app.main:app --reload
-
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-cmd:
+Abre `.env` y completa `MONGODB_URI` con la conexión real a MongoDB Atlas.
+No uses los valores `USER`, `PASSWORD` ni `CLUSTER` de la plantilla.
 
-```cmd
-python -m uvicorn app.main:app --reload
+En Atlas, crea el cluster y un usuario de base de datos, permite tu IP en el acceso
+de red y copia la conexión para Python. Configura también:
 
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
+```env
+MONGODB_DB_NAME=nuvly_dev
+PUBLIC_BASE_URL=http://localhost:8000
+FRONTEND_PUBLIC_BASE_URL=http://localhost:5173
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
-Sin activar el entorno:
+`PUBLIC_BASE_URL` es el origen público del backend y se usa para las URLs de assets.
+`FRONTEND_PUBLIC_BASE_URL` es el origen del frontend. No subas `.env` a GitHub.
 
-PowerShell:
+## 6. Iniciar el backend
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-cmd:
+Mantén esa terminal abierta. Para detener el servidor, pulsa `Ctrl+C`.
+También puedes usar `.\run.ps1`, que utiliza directamente el Python de `.venv`.
 
-```cmd
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+La activación del entorno es opcional. Si prefieres el comando corto, en cada
+terminal nueva ejecuta primero:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m uvicorn app.main:app --reload
 ```
 
-Swagger quedará disponible en:
+Si PowerShell bloquea `Activate.ps1` o `run.ps1`, usa el comando directo con
+`.\.venv\Scripts\python.exe` del inicio de este paso.
 
-```txt
-http://127.0.0.1:8000/api/docs
+En VS Code, selecciona `.venv\Scripts\python.exe` mediante **Python: Select Interpreter**.
+Abre después una terminal nueva.
+
+## 7. Verificar el servicio y MongoDB
+
+- Swagger: http://127.0.0.1:8000/api/docs
+- ReDoc: http://127.0.0.1:8000/api/redoc
+- OpenAPI: http://127.0.0.1:8000/api/openapi.json
+
+Desde otra terminal:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/api/health
 ```
 
----
+Espera `status: ready` y `database: ok`. Mientras termina la inicialización puede
+responder HTTP 503 con `status: starting`; espera unos segundos y vuelve a consultar.
+Si responde `database: error` o `status: degraded`, revisa la conexión de Atlas,
+las credenciales, la IP permitida y el acceso a internet. Swagger puede abrir aunque
+la conexión a MongoDB falle.
 
-# 4.2. Deploy en Render
+## Autenticación interna
 
-Render debe detectar `.python-version` en la raiz del repo con este contenido:
+- No existe registro público para trabajadores de Nuvly.
+- El arranque no crea ni modifica usuarios internos. No hay credenciales iniciales predeterminadas.
+- Los perfiles internos son `admin` y `developer`.
+- Solo un `admin` puede crear usuarios internos desde `POST /api/admin/studio/users`.
 
-```txt
-3.14.5
+Para provisionar el primer administrador, desde la raíz del backend y con el entorno
+de destino configurado, un operador autorizado ejecuta:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.create_internal_admin --email admin@example.com --name "Administrador"
 ```
 
-Start Command esperado:
+El comando solicita y confirma la contraseña con entrada oculta, aplica la política
+existente y solo inserta una cuenta nueva. Rechaza emails ya registrados, incluso
+si pertenecen a un cliente o una cuenta interna desactivada. No acepta contraseñas
+como argumentos, no imprime valores sensibles y no ejecuta el arranque del servidor,
+siembra de precios ni creación de índices. El despliegue debe tener el índice único
+de `users.emailNormalized` ya provisionado para impedir duplicados concurrentes.
 
-```txt
+En instalaciones anteriores, retirar el bootstrap no revoca credenciales ni sesiones
+existentes. Antes de dar por cerrada la remediación operativa:
+
+1. Desplegar esta corrección para impedir que un reinicio restaure la credencial anterior.
+2. Rotar la contraseña de la cuenta afectada mediante un procedimiento administrativo
+   autorizado, con contraseña generada y entregada por un canal seguro. La creación de
+   otra cuenta no sustituye esta rotación; no convertir una cuenta cliente en interna.
+3. Revocar todas las sesiones de esa identidad en `auth_sessions` y comprobar que sus
+   tokens anteriores ya no autentican. Revocar también enlaces de recuperación pendientes.
+4. Revisar accesos y copias de código, documentación, logs e historial que pudieran
+   conservar la credencial anterior. Nunca copiar su valor a tickets o informes.
+
+Estas operaciones se realizan explícitamente contra el entorno autorizado; no se
+ejecutan al arrancar ni al instalar el código.
+
+## Deploy en Render
+
+Las imágenes de producción requieren un volumen durable configurado. Ver
+[almacenamiento y restauración de media](docs/media-storage.md) antes de desplegar;
+el backend rechaza una configuración productiva con uploads efímeros.
+
+La versión de `.python-version` debe ser `3.14.5`.
+
+Start Command:
+
+```sh
 python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
-
----
-
-# 5. Crear MongoDB Atlas Free
-
-Para desarrollo usaremos MongoDB Atlas Free, no Mongo local y no Docker.
-
-Pasos:
-
-1. Entra a MongoDB Atlas.
-2. Crea un proyecto llamado `Nuvly`.
-3. Crea un cluster gratuito.
-4. Crea usuario y password.
-5. Permite acceso desde tu IP.
-6. En conexión selecciona `Conductores`.
-7. Selecciona Python.
-8. Copia el connection string.
-
-Ejemplo:
-
-```txt
-mongodb+srv://nuvly_user:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority
-```
-
-Reemplaza `<password>` por tu contraseña real.
-
----
-
-# 6. Crear archivo `.env`
-
-El archivo `.env.example` es solo una plantilla. Debes crear un archivo real llamado `.env` en la raíz del proyecto.
-
-Contenido ejemplo:
-
-```env
-APP_NAME=Nuvly Backend
-APP_ENV=development
-API_PREFIX=/api
-
-MONGODB_URI=mongodb+srv://TU_USUARIO:TU_PASSWORD@TU_CLUSTER.mongodb.net/?retryWrites=true&w=majority
-MONGODB_DB_NAME=nuvly_dev
-
-CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-PUBLIC_BASE_URL=http://localhost:8000
-FRONTEND_PUBLIC_BASE_URL=http://localhost:5173
-AUTH_SESSION_TTL_DAYS=30
-```
-
-`PUBLIC_BASE_URL` debe apuntar siempre al origen publico del backend.
-Se usa para construir URLs absolutas de assets como `/static/uploads/...` en respuestas del API.
-
-Ejemplos:
-
-```env
-# local
-PUBLIC_BASE_URL=http://localhost:8000
-FRONTEND_PUBLIC_BASE_URL=http://localhost:5173
-
-# uat
-PUBLIC_BASE_URL=https://api-uat.nuvlystudio.com
-FRONTEND_PUBLIC_BASE_URL=https://uat.nuvlystudio.com
-```
-
-No subas `.env` a GitHub.
-
----
-
-# 7. Levantar backend
-
-Opción directa:
-
-```powershell
-python -m uvicorn app.main:app --reload
-
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
-```
-
-O usando el script:
-
-```powershell
-.\run.ps1
-```
-
-La API quedará en:
-
-```txt
-http://localhost:8000
-```
-
----
-
-# 8. Abrir Swagger / OpenAPI
-
-Swagger UI:
-
-```txt
-http://localhost:8000/api/docs
-```
-
-ReDoc:
-
-```txt
-http://localhost:8000/api/redoc
-```
-
-OpenAPI JSON:
-
-```txt
-http://localhost:8000/api/openapi.json
-```
-
----
-
-# 9. Probar health
-
-Endpoint:
-
-```http
-GET /api/health
-```
-
-Respuesta esperada:
-
-```json
-{
-  "status": "ok",
-  "database": "ok",
-  "service": "nuvly-backend"
-}
-```
-
-Si falla aquí, normalmente es por:
-
-- `MONGODB_URI` incorrecto
-- password incorrecta
-- IP no permitida en Atlas
-- conexión a internet
-- `.env` mal escrito
 
 ---
 
@@ -848,134 +668,55 @@ No usamos herramientas caras de monitoreo todavía.
 
 ---
 
-# Qué NO incluye todavía
+# Alcance operativo pendiente
 
-- subida de imágenes
-- presets reales desde base de datos
-- preview privado por token
-- historial de snapshots consultable
-- duplicar experiencia
-- soft delete
-- formularios RSVP reales
-- analytics
-- Redis
-- Docker obligatorio
-- microservicios
-- IA
-
-Eso queda para versiones futuras.
-
----
+Existen uploads autenticados, snapshots, reportes y eventos analíticos con consentimiento. Su operación requiere infraestructura y configuración del entorno. La habilitación real de cobros, restauración de volumen/backup, rotación de credenciales heredadas, pruebas con Mongo y observabilidad en producción no quedan certificadas por una instalación local. Mercado Pago sigue limitado a integración.
 
 # Problemas comunes
 
-## Error: Failed building wheel for pydantic-core
+## No module named uvicorn
 
-Causa probable:
-
-- pip viejo
-- Pydantic viejo
-- entorno virtual creado antes de actualizar dependencias
-
-Solución:
+Estás usando otro Python o faltan dependencias. Desde la raíz:
 
 ```powershell
-python -m pip install --upgrade pip setuptools wheel
-pip install --upgrade "pydantic>=2.12.0" "fastapi>=0.119.0"
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
-Si sigue fallando, borra `.venv` y créalo de nuevo:
+## did not find executable / ruta de Python inexistente
 
-```powershell
-Remove-Item -Recurse -Force .venv
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt
-```
+El entorno virtual pertenece a otra instalación. Sigue el paso 3 para respaldarlo
+y recrearlo, y luego reinstala las dependencias del paso 4.
+
+## Failed building wheel for pydantic-core
+
+Comprueba que `.\.venv\Scripts\python.exe --version` muestre `3.14.5` y actualiza
+las herramientas del paso 4. Si el entorno era de otro equipo, recréalo.
 
 ## Error conectando a MongoDB
 
-Revisa:
-
-- usuario
-- password
-- connection string
-- IP permitida en MongoDB Atlas
-- internet
-- `.env`
+Revisa `.env`, las credenciales, el cluster y la IP permitida en Atlas. Consulta
+`/api/health` como se indica en el paso 7 para distinguir el arranque HTTP de la
+conexión a la base de datos.
 
 ## Swagger no abre
 
-Verifica que el backend esté levantado:
+Mantén el servidor ejecutándose y abre http://127.0.0.1:8000/api/docs.
+Si el puerto 8000 está ocupado, detén el servidor anterior o inicia en otro puerto:
 
 ```powershell
-python -m uvicorn app.main:app --reload
-
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8001
 ```
 
-Luego abre:
-
-```txt
-http://localhost:8000/api/docs
-```
+En ese caso, abre http://127.0.0.1:8001/api/docs.
 
 ## El frontend da error CORS
 
-Agrega el puerto del frontend en:
+Incluye el origen y puerto del frontend en `CORS_ORIGINS` dentro de `.env` y
+reinicia el backend. Ejemplo:
 
 ```env
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-```
-
----
-
-# Comandos rápidos
-
-Crear entorno:
-
-```powershell
-python -m venv .venv
-```
-
-Activar entorno:
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Actualizar herramientas:
-
-```powershell
-python -m pip install --upgrade pip setuptools wheel
-```
-
-Instalar dependencias:
-
-```powershell
-pip install -r requirements.txt
-```
-
-Levantar backend:
-
-```powershell
-python -m uvicorn app.main:app --reload
-
-Notas de autenticacion:
-- No existe registro publico para trabajadores de Nuvly.
-- La cuenta interna se asegura desde la base de datos/al iniciar el backend.
-- Credenciales internas iniciales: `nuvlystudio@gmail.com` / `Admin.1234`
-```
-
-Abrir Swagger:
-
-```txt
-http://localhost:8000/api/docs
 ```
 
 ---
@@ -1146,3 +887,13 @@ Compatibilidad legacy:
 
 - Si un cliente viejo envía solo `blocks` en raíz y/o `metadata.linkedPages`, el backend reconstruye `pages[]`.
 - Si un cliente viejo hace `PUT` sin `pages`, el backend preserva las páginas existentes y no vacía la primaria.
+
+
+## Calidad automática
+
+Instala las dependencias de desarrollo de `requirements-dev.txt` y ejecuta `python scripts/check_quality.py --tests` desde el entorno Python 3.14.5 del proyecto. Incluye lint/formato de app/scripts/tests, tipos estrictos en ocho módulos de contratos y pruebas offline. [Alcance, comandos y CI](docs/quality-phase4.md).
+
+
+## Validación operativa (fase 5)
+
+`python scripts/validate_staging.py --output <reporte.json>` recoge evidencia de solo lectura; `--env-file` selecciona configuración de staging. La auditoría agregada se ejecuta con `python scripts/audit_data_contracts.py --summary`. El ensayo con escrituras requiere un destino nuevo aislado explícito y conserva fixtures para revisión. [Estado, alcance y requisitos de cierre](docs/operations-phase5.md).

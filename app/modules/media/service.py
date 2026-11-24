@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import struct
+import warnings
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from typing import Final
 from uuid import uuid4
-import struct
-import xml.etree.ElementTree as ET
 
 from fastapi import Request, UploadFile
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import get_settings
 from app.core.database import get_database
@@ -18,19 +21,32 @@ ALLOWED_CONTENT_TYPES: Final[dict[str, str]] = {
     "image/jpeg": "jpg",
     "image/png": "png",
     "image/webp": "webp",
-    "image/svg+xml": "svg",
 }
 DEFAULT_SCOPE = "general"
 MAX_BATCH_FILES = 20
 
 
+def media_upload_root() -> Path:
+    settings = get_settings()
+    return Path(settings.media_storage_root) if settings.media_storage_root else STATIC_DIR / "uploads"
+
+
 def ensure_static_directories() -> None:
+    settings = get_settings()
+    if settings.app_env.lower() in {"production", "prod"} and (
+        not settings.media_storage_durable
+        or not settings.media_storage_root
+        or not Path(settings.media_storage_root).is_absolute()
+    ):
+        raise RuntimeError(
+            "Production media requires an absolute MEDIA_STORAGE_ROOT on a durable volume and MEDIA_STORAGE_DURABLE=true."
+        )
     STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    (STATIC_DIR / "uploads").mkdir(parents=True, exist_ok=True)
+    media_upload_root().mkdir(parents=True, exist_ok=True)
 
 
 def ensure_upload_directory(scope: str) -> Path:
-    directory = STATIC_DIR / "uploads" / scope
+    directory = media_upload_root() / scope
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -69,13 +85,13 @@ def _extract_jpeg_dimensions(content: bytes) -> tuple[int, int]:
             continue
         if offset + 2 > len(content):
             break
-        segment_length = struct.unpack(">H", content[offset:offset + 2])[0]
+        segment_length = struct.unpack(">H", content[offset : offset + 2])[0]
         if segment_length < 2 or offset + segment_length > len(content):
             break
         if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
             if offset + 7 > len(content):
                 break
-            height, width = struct.unpack(">HH", content[offset + 3:offset + 7])
+            height, width = struct.unpack(">HH", content[offset + 3 : offset + 7])
             return width, height
         offset += segment_length
 
@@ -150,7 +166,7 @@ def extract_dimensions(content_type: str, content: bytes) -> tuple[int, int]:
 
 def _raise_invalid_file_type() -> None:
     raise NuvlyError(
-        "Invalid file type. Allowed types: image/jpeg, image/png, image/webp, image/svg+xml.",
+        "Invalid file type. Allowed types: image/jpeg, image/png, image/webp.",
         status_code=400,
         code="INVALID_FILE_TYPE",
     )
@@ -184,7 +200,7 @@ def _build_asset_payload(
     if extension is None:
         _raise_invalid_file_type()
 
-    content = file.file.read()
+    content = file.file.read(settings.media_max_size_bytes + 1)
     size = len(content)
     if size > settings.media_max_size_bytes:
         raise NuvlyError(
@@ -197,8 +213,29 @@ def _build_asset_payload(
     filename = f"{asset_id}.{extension}"
     upload_directory = ensure_upload_directory(scope)
     file_path = upload_directory / filename
-    relative_path = file_path.as_posix()
-    width, height = extract_dimensions(content_type, content)
+    relative_path = f"static/uploads/{scope}/{filename}"
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                expected = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"}[content_type]
+                if image.format != expected or image.width * image.height > 40_000_000:
+                    raise ValueError("Invalid image format or dimensions")
+                width, height = image.size
+                image.verify()
+            with Image.open(BytesIO(content)) as image:
+                image.load()
+    except (
+        ValueError,
+        SyntaxError,
+        OSError,
+        UnidentifiedImageError,
+        Image.DecompressionBombWarning,
+        Image.DecompressionBombError,
+    ) as exc:
+        raise NuvlyError(
+            "El archivo no es una imagen válida o excede las dimensiones permitidas.", 400, "INVALID_IMAGE"
+        ) from exc
     created_at = datetime.now(timezone.utc)
     asset_url = build_public_url(request, relative_path)
     document = {
@@ -213,7 +250,7 @@ def _build_asset_payload(
         "ownerId": owner_id,
         "createdAt": created_at,
         "storage": {
-            "provider": "render_filesystem_mvp",
+            "provider": "filesystem",
             "path": relative_path,
             "filename": filename,
         },
@@ -230,8 +267,8 @@ def _persist_prepared_assets(prepared_assets: list[dict], *, error_code: str, er
     inserted_ids: list[str] = []
 
     try:
-        # Temporary MVP storage for Render. This filesystem is not permanent and must
-        # be migrated later to object storage such as Cloudinary, S3 or Cloudflare R2.
+        # Production requires an explicitly provisioned durable volume. Public
+        # keys stay stable regardless of the deployment's physical mount path.
         for prepared_asset in prepared_assets:
             prepared_asset["file_path"].write_bytes(prepared_asset["content"])
             saved_paths.append(prepared_asset["file_path"])
@@ -258,7 +295,7 @@ def _persist_prepared_assets(prepared_assets: list[dict], *, error_code: str, er
         if inserted_ids and hasattr(collection, "delete_many"):
             collection.delete_many({"id": {"$in": inserted_ids}})
         raise NuvlyError(
-            f"{error_message}: {exc}",
+            error_message,
             status_code=500,
             code=error_code,
         ) from exc

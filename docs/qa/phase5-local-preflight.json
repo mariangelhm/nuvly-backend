@@ -1,0 +1,47 @@
+{
+  "generatedAt": "2026-11-24T19:28:30.985200+00:00",
+  "mode": "read-only",
+  "environment": "development",
+  "checks": {
+    "stagingIdentity": {
+      "status": "blocked",
+      "code": "DECLARED_ENVIRONMENT_ONLY"
+    },
+    "integrationPayments": {
+      "status": "passed"
+    },
+    "httpsOrigins": {
+      "status": "blocked",
+      "code": "HTTPS_REQUIRED_FOR_STAGING_COOKIES"
+    },
+    "durableMediaDeclared": {
+      "status": "blocked",
+      "code": "RESTART_AND_RESTORE_EVIDENCE_REQUIRED"
+    },
+    "mongoTls": {
+      "status": "passed",
+      "durationMs": 1930
+    },
+    "customerProductIndex": {
+      "status": "failed"
+    },
+    "apiHealth": {
+      "status": "blocked",
+      "errorType": "ConnectionError"
+    },
+    "frontend": {
+      "status": "blocked",
+      "errorType": "ConnectionError"
+    }
+  },
+  "remaining": [
+    "browser_sessions",
+    "payment_uat",
+    "instance_replacement",
+    "backup_restore",
+    "real_network_timeout",
+    "snapshot_reconciliation",
+    "published_editor_roundtrip"
+  ],
+  "phaseComplete": false
+}

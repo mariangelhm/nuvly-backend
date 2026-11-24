@@ -1,0 +1,6 @@
+-r requirements.txt
+-c requirements-dev-lock.txt
+pytest>=8.0.0
+pypdf>=6,<8
+ruff==0.17.6
+mypy==2.4.1

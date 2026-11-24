@@ -1,6 +1,5 @@
 from pymongo import ASCENDING, MongoClient
 from pymongo.database import Database
-from pymongo.errors import OperationFailure
 
 from app.core.config import get_settings
 
@@ -17,8 +16,8 @@ def get_client() -> MongoClient:
             connectTimeoutMS=20000,
             socketTimeoutMS=20000,
             tls=True,
-            tlsAllowInvalidCertificates=True,
-            tlsAllowInvalidHostnames=True,
+            tlsAllowInvalidCertificates=False,
+            tlsAllowInvalidHostnames=False,
         )
     return _client
 
@@ -28,19 +27,27 @@ def get_database() -> Database:
     return get_client()[settings.mongodb_db_name]
 
 
-def _drop_index_if_exists(collection, index_name: str) -> None:
-    try:
-        existing_indexes = collection.index_information()
-        if index_name in existing_indexes:
-            collection.drop_index(index_name)
-    except OperationFailure:
-        pass
-
-
 def create_indexes() -> None:
     db = get_database()
+    db.rate_limits.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
+    db.operating_costs.create_index([("id", ASCENDING)], unique=True)
+    db.operating_costs.create_index([("environment", ASCENDING), ("active", ASCENDING), ("incurredOn", ASCENDING)])
+    db.analytics_events.create_index([("id", ASCENDING)], unique=True)
+    db.analytics_events.create_index([("environment", ASCENDING), ("receivedAt", ASCENDING)])
+    db.analytics_events.create_index([("sessionId", ASCENDING), ("receivedAt", ASCENDING)])
+    db.analytics_events.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
+    db.experience_metrics.create_index([("environment", ASCENDING), ("receivedAt", ASCENDING)])
+    db.experience_metrics.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
+    db.payments.create_index([("projectId", ASCENDING)])
     db.users.create_index([("id", ASCENDING)], unique=True)
     db.users.create_index([("emailNormalized", ASCENDING)], unique=True)
+    db.users.create_index(
+        [("providerLinks.google.subject", ASCENDING)],
+        unique=True,
+        partialFilterExpression={"providerLinks.google.subject": {"$type": "string"}},
+    )
+    db.auth_google_challenges.create_index([("tokenHash", ASCENDING)], unique=True)
+    db.auth_google_challenges.create_index([("expiresAt", ASCENDING)], expireAfterSeconds=0)
     db.users.create_index([("active", ASCENDING)])
     db.users.create_index([("createdAt", ASCENDING)])
     db.users.create_index([("authProviders", ASCENDING)])
@@ -55,21 +62,23 @@ def create_indexes() -> None:
     db.customer_invitations.create_index([("ownerId", ASCENDING)])
     db.customer_invitations.create_index([("ownerEmail", ASCENDING)])
     db.customer_websites.create_index([("ownerId", ASCENDING)])
+    db.customer_invitations.create_index([("ownerId", ASCENDING), ("updatedAt", -1), ("id", ASCENDING)])
+    db.customer_websites.create_index([("ownerId", ASCENDING), ("updatedAt", -1), ("id", ASCENDING)])
     db.customer_websites.create_index([("ownerEmail", ASCENDING)])
     db.invitation_templates.create_index([("slug", ASCENDING)], unique=True)
     db.invitation_templates.create_index([("templateStatus", ASCENDING)])
     db.invitation_templates.create_index([("updatedAt", ASCENDING)])
     db.invitation_templates.create_index([("metadata.catalogVisible", ASCENDING)])
-    db.invitation_templates.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
+    db.invitation_templates.create_index(
+        [("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)]
+    )
     db.website_templates.create_index([("slug", ASCENDING)], unique=True)
     db.website_templates.create_index([("templateStatus", ASCENDING)])
     db.website_templates.create_index([("updatedAt", ASCENDING)])
     db.website_templates.create_index([("metadata.catalogVisible", ASCENDING)])
-    db.website_templates.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
-    _drop_index_if_exists(db.customer_invitations, "slug_1")
-    _drop_index_if_exists(db.customer_websites, "slug_1")
-    _drop_index_if_exists(db.customer_invitations, "publicSlug_1")
-    _drop_index_if_exists(db.customer_websites, "publicSlug_1")
+    db.website_templates.create_index(
+        [("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)]
+    )
     db.customer_invitations.create_index([("slug", ASCENDING)])
     db.customer_invitations.create_index(
         [("publicSlug", ASCENDING)],
@@ -78,7 +87,9 @@ def create_indexes() -> None:
     )
     db.customer_invitations.create_index([("customerStatus", ASCENDING)])
     db.customer_invitations.create_index([("updatedAt", ASCENDING)])
-    db.customer_invitations.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
+    db.customer_invitations.create_index(
+        [("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)]
+    )
     db.customer_websites.create_index([("slug", ASCENDING)])
     db.customer_websites.create_index(
         [("publicSlug", ASCENDING)],
@@ -87,7 +98,9 @@ def create_indexes() -> None:
     )
     db.customer_websites.create_index([("customerStatus", ASCENDING)])
     db.customer_websites.create_index([("updatedAt", ASCENDING)])
-    db.customer_websites.create_index([("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)])
+    db.customer_websites.create_index(
+        [("productType", ASCENDING), ("planTier", ASCENDING), ("templateCategory", ASCENDING)]
+    )
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING)])
     db.invitation_template_snapshots.create_index([("sourceId", ASCENDING), ("version", ASCENDING)], unique=True)
     db.invitation_template_snapshots.create_index([("slug", ASCENDING)])
@@ -104,6 +117,11 @@ def create_indexes() -> None:
     db.payments.create_index([("projectType", ASCENDING), ("projectId", ASCENDING)])
     db.payments.create_index([("provider", ASCENDING), ("status", ASCENDING)])
     db.payments.create_index([("createdAt", ASCENDING)])
+    db.payment_receipt_emails.create_index([("id", ASCENDING)], unique=True)
+    db.support_tickets.create_index([("id", ASCENDING)], unique=True)
+    db.support_tickets.create_index([("reference", ASCENDING)], unique=True)
+    db.support_tickets.create_index([("createdAt", ASCENDING)])
+    db.support_tickets.create_index([("status", ASCENDING), ("category", ASCENDING)])
     db.discount_codes.create_index([("id", ASCENDING)], unique=True)
     db.discount_codes.create_index([("codeNormalized", ASCENDING)], unique=True)
     db.discount_codes.create_index([("active", ASCENDING), ("createdAt", ASCENDING)])
@@ -116,7 +134,6 @@ def create_indexes() -> None:
     db.pricing_plans.create_index([("productType", ASCENDING), ("active", ASCENDING)])
     db.pricing_plans.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])
     db.pricing_components.create_index([("id", ASCENDING)], unique=True)
-    _drop_index_if_exists(db.pricing_components, "componentCode_1")
     db.pricing_components.create_index([("productType", ASCENDING), ("componentCode", ASCENDING)], unique=True)
     db.pricing_components.create_index([("productType", ASCENDING), ("active", ASCENDING)])
     db.pricing_components.create_index([("productType", ASCENDING), ("sortOrder", ASCENDING)])

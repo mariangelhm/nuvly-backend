@@ -1,16 +1,19 @@
 import asyncio
-from contextlib import asynccontextmanager, suppress
 import logging
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
 from app.core.config import get_settings
 from app.core.database import close_database, create_indexes, ping_database
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
-from app.modules.auth.routes import router as auth_router
+from app.core.rate_limits import AbuseLimitMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.modules.auth.routes import admin_router as auth_admin_router
-from app.modules.auth.service import AuthService
+from app.modules.auth.routes import router as auth_router
 from app.modules.catalog.routes import admin_router as catalog_admin_router
 from app.modules.catalog.routes import router as catalog_router
 from app.modules.domain.customer_routes import router as customer_router
@@ -18,15 +21,16 @@ from app.modules.domain.public_routes import router as public_router
 from app.modules.domain.studio_routes import admin_router as studio_admin_router
 from app.modules.domain.studio_routes import router as studio_router
 from app.modules.health.routes import router as health_router
+from app.modules.media.limits import MediaRequestLimitMiddleware, UploadedAssetHeadersMiddleware
 from app.modules.media.routes import router as media_router
-from app.modules.media.service import ensure_static_directories
+from app.modules.media.service import ensure_static_directories, media_upload_root
 from app.modules.payments.routes import router as payments_router
 from app.modules.pricing.routes import admin_router as pricing_admin_router
 from app.modules.pricing.routes import router as pricing_router
 from app.modules.pricing.service import ensure_pricing_seed
-
-NUVLY_INTERNAL_EMAIL = "nuvlystudio@gmail.com"
-NUVLY_INTERNAL_PASSWORD = "Admin.1234"
+from app.modules.reporting.analytics import router as analytics_router
+from app.modules.reporting.routes import router as reporting_router
+from app.modules.support.routes import admin_router as support_admin_router
 from app.modules.support.routes import router as support_router
 
 configure_logging()
@@ -39,14 +43,6 @@ async def initialize_application(app: FastAPI) -> None:
         await asyncio.to_thread(ping_database)
         await asyncio.to_thread(create_indexes)
         seed_stats = await asyncio.to_thread(ensure_pricing_seed)
-        internal_user = await asyncio.to_thread(
-            lambda: AuthService().ensure_internal_user(
-                email=NUVLY_INTERNAL_EMAIL,
-                password=NUVLY_INTERNAL_PASSWORD,
-                name="Nuvly",
-                internal_role="admin",
-            )
-        )
         app.state.startup_status = "ready"
         app.state.startup_error = None
         logger.info("MongoDB connected and indexes created")
@@ -59,10 +55,9 @@ async def initialize_application(app: FastAPI) -> None:
             seed_stats.skippedComponents,
             seed_stats.skippedTemplateCategories,
         )
-        logger.info("Internal auth user ensured | email=%s userId=%s", internal_user["email"], internal_user["id"])
     except Exception as exc:
         app.state.startup_status = "degraded"
-        app.state.startup_error = str(exc)
+        app.state.startup_error = type(exc).__name__
         logger.exception("MongoDB startup failed")
 
 
@@ -81,6 +76,7 @@ async def lifespan(app: FastAPI):
         close_database()
         logger.info("Nuvly Backend stopped")
 
+
 settings = get_settings()
 ensure_static_directories()
 app = FastAPI(
@@ -92,7 +88,13 @@ app = FastAPI(
     openapi_url=f"{settings.api_prefix}/openapi.json",
     lifespan=lifespan,
 )
+app.mount("/static/uploads", StaticFiles(directory=media_upload_root()), name="uploads")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.add_middleware(
+    MediaRequestLimitMiddleware, api_prefix=settings.api_prefix, max_file_bytes=settings.media_max_size_bytes
+)
+app.add_middleware(UploadedAssetHeadersMiddleware)
+app.add_middleware(AbuseLimitMiddleware, api_prefix=settings.api_prefix)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -100,6 +102,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware, api_prefix=settings.api_prefix)
 register_exception_handlers(app)
 app.include_router(auth_router, prefix=settings.api_prefix)
 app.include_router(auth_admin_router, prefix=settings.api_prefix)
@@ -115,6 +118,10 @@ app.include_router(studio_admin_router, prefix=settings.api_prefix)
 app.include_router(public_router, prefix=settings.api_prefix)
 app.include_router(customer_router, prefix=settings.api_prefix)
 app.include_router(support_router, prefix=settings.api_prefix)
+app.include_router(reporting_router, prefix=settings.api_prefix)
+app.include_router(analytics_router, prefix=settings.api_prefix)
+app.include_router(support_admin_router, prefix=settings.api_prefix)
+
 
 @app.get("/")
 def root():

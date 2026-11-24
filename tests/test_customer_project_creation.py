@@ -3,12 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict
 
-import app.main as main_module
 import pytest
+
+import app.main as main_module
 from app.core.errors import NuvlyError
 from app.modules.domain.schemas import (
-    CustomerProjectCreate,
     CustomerData,
+    CustomerProjectCreate,
     CustomerWebsiteResponse,
     CustomerWebsiteUpdate,
     PublishRequest,
@@ -59,7 +60,11 @@ class InMemoryDomainRepository:
         sort_field: str = "updatedAt",
         sort_direction: int = -1,
     ) -> list[Dict[str, Any]]:
-        documents = [deepcopy(document) for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        documents = [
+            deepcopy(document)
+            for document in self.collections.get(collection_name, [])
+            if self._matches(document, filters)
+        ]
         documents.sort(key=lambda document: _get_nested(document, sort_field), reverse=sort_direction == -1)
         documents = documents[skip:]
         if limit > 0:
@@ -84,16 +89,29 @@ class InMemoryDomainRepository:
         not_found_code: str,
         duplicate_message: str,
         duplicate_code: str = "DUPLICATED_SLUG",
+        expected_updated_at: str | None = None,
     ) -> Dict[str, Any]:
         documents = self.collections.get(collection_name, [])
         for index, current in enumerate(documents):
             if current.get("id") == document_id:
+                if expected_updated_at is not None and current.get("updatedAt") != expected_updated_at:
+                    raise NuvlyError("Concurrent update", 409, "PROJECT_VERSION_CONFLICT")
                 documents[index] = deepcopy(document)
                 return deepcopy(document)
         raise AssertionError(f"Document not found in test repository: {collection_name}/{document_id}")
 
+    def archive_temporary_draft(self, collection_name, document, reason):
+        from app.core.utils import utc_now_iso
+
+        for current in self.collections.get(collection_name, []):
+            if current["id"] == document["id"] and current.get("updatedAt") == document.get("updatedAt"):
+                current["draftArchivedAt"] = utc_now_iso()
+                current["draftArchiveReason"] = reason
+
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
-        return len([document for document in self.collections.get(collection_name, []) if self._matches(document, filters)])
+        return len(
+            [document for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        )
 
     @staticmethod
     def _matches(document: Dict[str, Any], filters: Dict[str, Any]) -> bool:
@@ -115,7 +133,17 @@ class InMemoryDomainRepository:
 
 
 def _website_payload() -> Dict[str, Any]:
-    root_blocks = [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {"headline": "Hola"}, "settings": {}}]
+    root_blocks = [
+        {
+            "id": "blk_hero",
+            "type": "hero",
+            "variant": "H1",
+            "enabled": True,
+            "order": 1,
+            "props": {"headline": "Hola"},
+            "settings": {},
+        }
+    ]
     return {
         "title": "Buildframe",
         "slug": "buildframe",
@@ -171,6 +199,38 @@ def _website_payload_with_uploaded_images() -> Dict[str, Any]:
     return payload
 
 
+@pytest.mark.parametrize("linked", [False, True])
+def test_save_preserves_disabled_premium_blocks_but_rejects_activation(linked: bool) -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    payload = _website_payload()
+    payload.update(productType="website", planTier="plus", templateCategory="construction")
+    blocks = payload["pages"][1 if linked else 0]["blocks"]
+    blocks.append(
+        {
+            "id": "optional_form",
+            "type": "leadForm",
+            "variant": "LFP1-Multi-Step",
+            "enabled": False,
+            "order": len(blocks) + 1,
+            "props": {},
+            "settings": {},
+        }
+    )
+    if not linked:
+        payload["layout"]["sectionOrder"].append("optional_form")
+    created = service.create(WebsiteTemplateCreate.model_validate(payload))
+    stored_block = created["pages"][1 if linked else 0]["blocks"][-1]
+    assert stored_block["id"] == "optional_form"
+    assert stored_block["enabled"] is False
+    service.update(created["id"], WebsiteTemplateUpdate.model_validate(payload))
+    blocks[-1]["enabled"] = True
+    with pytest.raises(NuvlyError) as exc_info:
+        service.update(created["id"], WebsiteTemplateUpdate.model_validate(payload))
+    assert exc_info.value.code == "VARIANT_NOT_ALLOWED_FOR_PLAN"
+
+
 def test_public_template_read_does_not_create_customer_project() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
@@ -191,7 +251,10 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
     customer_service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
 
-    created = template_service.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    payload = _website_payload()
+    payload["templateComponent"] = "web-manicura-bienestar"
+    payload["content"] = {"templateComponent": "web-manicura-bienestar", "customText": "Publicado"}
+    created = template_service.create(WebsiteTemplateCreate.model_validate(payload))
     published_snapshot = template_service.publish(created["id"])
 
     project = customer_service.create_from_template(
@@ -201,6 +264,14 @@ def test_create_customer_project_uses_published_snapshot_and_starts_as_draft() -
         )
     )
 
+    assert published_snapshot["snapshot"]["content"] == payload["content"]
+    assert project["templateComponent"] == payload["templateComponent"]
+    assert project["content"] == payload["content"]
+    updated = customer_service.update(project["id"], CustomerWebsiteUpdate.model_validate(project))
+    assert updated["content"] == payload["content"]
+    frozen = customer_service._build_snapshot_payload(updated, 1, updated["updatedAt"])
+    assert frozen["templateComponent"] == payload["templateComponent"]
+    assert frozen["content"] == payload["content"]
     assert project["templateId"] == created["id"]
     assert project["templateSnapshotId"] == published_snapshot["id"]
     assert project["ownerId"] is None
@@ -247,7 +318,7 @@ def test_create_customer_project_can_link_authenticated_user_context() -> None:
     assert project["externalAuthSubject"] == "usr_123"
 
 
-def test_list_customer_projects_by_owner_matches_owner_id_and_owner_email() -> None:
+def test_list_customer_projects_requires_owner_id_and_excludes_unclaimed_email_match() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -278,9 +349,14 @@ def test_list_customer_projects_by_owner_matches_owner_id_and_owner_email() -> N
         )
     )
 
+    for document in repository.collections[CUSTOMER_WEBSITE_CONFIG.collection]:
+        if document["id"] == by_id["id"]:
+            document["payment"]["status"] = "paid"
+
     projects = customer_service.list_by_owner(owner_id="usr_123", owner_email="lara@test.dev")
 
-    assert [project["id"] for project in projects] == [by_email["id"], by_id["id"]]
+    assert [project["id"] for project in projects] == [by_id["id"]]
+    assert by_email["id"] not in {project["id"] for project in projects}
     assert all(project["ownerEmail"] == "lara@test.dev" for project in projects)
     assert other["id"] not in {project["id"] for project in projects}
 
@@ -309,7 +385,7 @@ def test_customer_project_summary_uses_shared_listing_shape() -> None:
     assert summary["metadata"]["coverImage"] == project["metadata"]["coverImage"]
 
 
-def test_get_customer_project_for_owner_allows_owner_email_match() -> None:
+def test_get_customer_project_for_owner_rejects_email_match_without_claim() -> None:
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -324,9 +400,9 @@ def test_get_customer_project_for_owner_allows_owner_email_match() -> None:
         )
     )
 
-    loaded = customer_service.get_for_owner(project["id"], owner_email="lara@test.dev")
-
-    assert loaded["id"] == project["id"]
+    with pytest.raises(NuvlyError) as exc:
+        customer_service.get_for_owner(project["id"], owner_email="lara@test.dev")
+    assert exc.value.code == "CUSTOMER_PROJECT_FORBIDDEN"
 
 
 def test_get_customer_project_for_owner_rejects_other_customer() -> None:
@@ -425,8 +501,14 @@ def test_create_customer_project_absolutizes_uploaded_image_urls_in_response_onl
 
     stored = repository.find_document(CUSTOMER_WEBSITE_CONFIG.collection, {"id": project["id"]})
 
-    assert project["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
-    assert project["pages"][0]["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert (
+        project["blocks"][0]["props"]["mediaImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    )
+    assert (
+        project["pages"][0]["blocks"][0]["props"]["mediaImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    )
     assert project["metadata"]["coverImage"] == "http://localhost:8000/static/uploads/website_template/asset_cover.png"
     assert stored is not None
     assert stored["blocks"][0]["props"]["mediaImage"] == "/static/uploads/website_template/asset_hero.png"
@@ -493,8 +575,14 @@ def test_get_customer_project_absolutizes_uploaded_image_urls() -> None:
 
     loaded = customer_service.get(project["id"], base_url="http://localhost:8000")
 
-    assert loaded["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
-    assert loaded["pages"][0]["blocks"][0]["props"]["mediaImage"] == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    assert (
+        loaded["blocks"][0]["props"]["mediaImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    )
+    assert (
+        loaded["pages"][0]["blocks"][0]["props"]["mediaImage"]
+        == "http://localhost:8000/static/uploads/website_template/asset_hero.png"
+    )
     assert loaded["metadata"]["coverImage"] == "http://localhost:8000/static/uploads/website_template/asset_cover.png"
 
 
@@ -576,7 +664,7 @@ def test_template_create_rejects_variant_blocked_by_plan() -> None:
     except NuvlyError as exc:
         assert exc.code == "VARIANT_NOT_ALLOWED_FOR_PLAN"
         assert "productType='website'" in exc.message
-        assert "planTier='essential'" in exc.message
+        assert "planTier='plus'" in exc.message
         assert "componentCode='hero'" in exc.message
         assert "variantCode='H8'" in exc.message
     else:
@@ -781,18 +869,26 @@ def test_template_create_rejects_component_blocked_by_plan_before_variant() -> N
     payload["planTier"] = "essential"
     payload["templateCategory"] = "construction"
     payload["blocks"] = [
-        {"id": "blk_lead_form", "type": "leadForm", "variant": "Q1", "enabled": True, "order": 1, "props": {}, "settings": {}}
+        {
+            "id": "blk_branches",
+            "type": "maintainer",
+            "variant": "MTP1-Configurable-Maintainer",
+            "enabled": True,
+            "order": 1,
+            "props": {},
+            "settings": {},
+        }
     ]
     payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
-    payload["layout"]["sectionOrder"] = ["blk_lead_form"]
+    payload["layout"]["sectionOrder"] = ["blk_branches"]
 
     try:
         template_service.create(WebsiteTemplateCreate.model_validate(payload))
     except NuvlyError as exc:
         assert exc.code == "COMPONENT_NOT_ALLOWED_FOR_PLAN"
         assert "productType='website'" in exc.message
-        assert "planTier='essential'" in exc.message
-        assert "componentCode='leadForm'" in exc.message
+        assert "planTier='plus'" in exc.message
+        assert "componentCode='maintainer'" in exc.message
     else:
         raise AssertionError("Expected COMPONENT_NOT_ALLOWED_FOR_PLAN")
 
@@ -805,7 +901,15 @@ def test_template_create_allows_component_previously_blocked_by_category() -> No
     payload["planTier"] = "plus"
     payload["templateCategory"] = "beauty"
     payload["blocks"] = [
-        {"id": "blk_projects", "type": "projects", "variant": "G1", "enabled": True, "order": 1, "props": {}, "settings": {}}
+        {
+            "id": "blk_projects",
+            "type": "projects",
+            "variant": "G1",
+            "enabled": True,
+            "order": 1,
+            "props": {},
+            "settings": {},
+        }
     ]
     payload["pages"][0]["blocks"] = deepcopy(payload["blocks"])
     payload["layout"]["sectionOrder"] = ["blk_projects"]
@@ -905,7 +1009,9 @@ def test_create_customer_project_from_custom_template_preserves_manual_base_pric
     assert project["metadata"]["basePrice"] == 99000
 
 
-def test_create_customer_project_from_custom_template_defaults_to_plan_base_price_when_snapshot_has_no_manual_price() -> None:
+def test_create_customer_project_from_custom_template_defaults_to_plan_base_price_when_snapshot_has_no_manual_price() -> (
+    None
+):
     repository = InMemoryDomainRepository()
     ensure_pricing_seed(repository=repository)
     template_service = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
@@ -925,7 +1031,7 @@ def test_create_customer_project_from_custom_template_defaults_to_plan_base_pric
     )
 
     assert project["planTier"] == "custom"
-    assert project["metadata"]["basePrice"] == 250000
+    assert project["metadata"]["basePrice"] == 399990
 
 
 def test_create_customer_project_from_custom_template_preserves_manual_zero_base_price() -> None:
@@ -1119,3 +1225,109 @@ def test_update_customer_website_preserves_custom_design_payloads_for_custom_sit
     assert response["metadata"]["customFlag"] == "nails-studio-live"
     assert response["websiteData"]["booking"]["provider"] == "booksy"
     assert response["customerData"]["preferences"]["language"] == "es-CL"
+
+
+@pytest.mark.parametrize("selection", ["current", "stale", "unpublished", "unknown", "wrong_product"])
+def test_customer_selection_recovers_only_current_published_snapshot_ids(selection) -> None:
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    templates = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    customers = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    template = templates.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    snapshot = templates.publish(template["id"])
+    selected_id = snapshot["id"]
+    if selection == "stale":
+        templates.publish(template["id"])
+    elif selection == "unpublished":
+        repository.collections[WEBSITE_TEMPLATE_CONFIG.collection][0]["templateStatus"] = "unpublished"
+    elif selection == "unknown":
+        selected_id = "snap_not_found"
+    elif selection == "wrong_product":
+        repository.collections[WEBSITE_TEMPLATE_CONFIG.snapshot_collection][0]["sourceType"] = "invitation_template"
+    payload = CustomerProjectCreate(
+        templateId=selected_id, customerData=CustomerData(name="Lara", email="lara@test.dev")
+    )
+    if selection == "current":
+        project = customers.create_from_template(payload)
+        assert project["templateId"] == template["id"]
+        assert project["templateSnapshotId"] == snapshot["id"]
+        assert project["pages"] == snapshot["snapshot"]["pages"]
+    else:
+        with pytest.raises(NuvlyError) as exc:
+            customers.create_from_template(payload)
+        assert exc.value.code == "PUBLISHED_TEMPLATE_NOT_FOUND"
+        assert repository.collections.get(CUSTOMER_WEBSITE_CONFIG.collection, []) == []
+
+
+def test_temporary_drafts_expire_deduplicate_and_preserve_purchases():
+    from datetime import datetime, timedelta, timezone
+
+    repository = InMemoryDomainRepository()
+    service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    now = datetime.now(timezone.utc)
+
+    def draft(identifier, template, days, **patch):
+        return {
+            "id": identifier,
+            "ownerId": "owner",
+            "templateId": template,
+            "customerStatus": "draft",
+            "payment": {"status": "unpaid"},
+            "updatedAt": (now - timedelta(days=days)).isoformat(),
+            **patch,
+        }
+
+    documents = [
+        draft("latest", "same", 1),
+        draft("older", "same", 2),
+        draft("expired", "expired-template", 31),
+        draft("other-template", "other", 3),
+        draft("paid", "same", 90, payment={"status": "paid"}),
+        draft("checkout", "same", 90, customerStatus="pending_payment"),
+        draft("published", "same", 90, lastPublishedAt="2026-01-01"),
+        draft("other-owner", "same", 99, ownerId="someone-else"),
+    ]
+    repository.collections[CUSTOMER_WEBSITE_CONFIG.collection] = documents
+    active = service._active_owner_documents("owner")
+    assert {doc["id"] for doc in active} == {"latest", "other-template", "paid", "checkout", "published"}
+    assert next(doc for doc in documents if doc["id"] == "older")["draftArchiveReason"] == "superseded"
+    assert next(doc for doc in documents if doc["id"] == "expired")["draftArchiveReason"] == "expired"
+    assert not next(doc for doc in documents if doc["id"] == "other-owner").get("draftArchivedAt")
+    assert len(service._active_owner_documents("owner")) == 5
+
+
+def test_selecting_same_template_resumes_latest_customer_draft():
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    templates = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    template = templates.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    templates.publish(template["id"])
+    payload = CustomerProjectCreate(
+        templateId=template["id"], customerData=CustomerData(name="Lara", email="lara@test.dev")
+    )
+    owner = {"id": "owner", "email": "lara@test.dev"}
+    first = service.create_from_template(payload, current_user=owner)
+    second = service.create_from_template(payload, current_user=owner)
+    assert second["id"] == first["id"]
+    assert len(repository.collections[CUSTOMER_WEBSITE_CONFIG.collection]) == 1
+
+
+def test_original_format_uses_selected_snapshot_and_requires_project_owner():
+    repository = InMemoryDomainRepository()
+    ensure_pricing_seed(repository=repository)
+    templates = TemplateService(WEBSITE_TEMPLATE_CONFIG, repository=repository)
+    service = CustomerProjectService(CUSTOMER_WEBSITE_CONFIG, repository=repository)
+    template = templates.create(WebsiteTemplateCreate.model_validate(_website_payload()))
+    publication = templates.publish(template["id"])
+    payload = CustomerProjectCreate(
+        templateId=template["id"], customerData=CustomerData(name="Lara", email="lara@test.dev")
+    )
+    project = service.create_from_template(payload, current_user={"id": "owner", "email": "lara@test.dev"})
+    original = service.get_original_format_for_owner(project["id"], owner_id="owner")
+    assert original["styles"] == publication["snapshot"]["styles"]
+    assert "props" not in original["blocks"][0]
+    assert original["blocks"][0]["settings"] == publication["snapshot"]["blocks"][0]["settings"]
+    with pytest.raises(NuvlyError) as forbidden:
+        service.get_original_format_for_owner(project["id"], owner_id="other-owner")
+    assert forbidden.value.status_code == 403

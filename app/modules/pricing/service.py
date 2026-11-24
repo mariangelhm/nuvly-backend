@@ -10,18 +10,25 @@ from app.core.catalog import (
     VALID_PRODUCT_TYPES,
     VALID_TEMPLATE_CATEGORIES,
     VALID_VARIANT_LEVELS,
-    infer_variant_level_from_plan_rules,
-    normalize_variant_level,
     PlanTier,
     ProductType,
     TemplateCategoryCode,
     VariantLevel,
+    infer_variant_level_from_plan_rules,
+    normalize_plan_tier,
+    normalize_variant_level,
 )
 from app.core.errors import NuvlyError
 from app.core.utils import new_id, utc_now_iso
 from app.modules.pricing.repository import PricingRepository
 from app.modules.pricing.schemas import PricingSeedStats
-from app.modules.pricing.seed import COMPONENT_SEEDS, GENERAL_EXTRA_SEEDS, PLAN_SEEDS, TEMPLATE_CATEGORY_SEEDS, empty_seed_stats
+from app.modules.pricing.seed import (
+    COMPONENT_SEEDS,
+    GENERAL_EXTRA_SEEDS,
+    PLAN_SEEDS,
+    TEMPLATE_CATEGORY_SEEDS,
+    empty_seed_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +62,12 @@ def _normalize_component_response_document(document: Dict[str, Any]) -> Dict[str
     normalized_variants: List[Dict[str, Any]] = []
     for variant in normalized.get("variants") or []:
         normalized_variant = deepcopy(variant)
-        included_in_plans = [tier for tier in (normalized_variant.get("includedInPlans") or []) if tier in VALID_PLAN_TIERS]
-        can_be_extra_in_plans = [tier for tier in (normalized_variant.get("canBeExtraInPlans") or []) if tier in VALID_PLAN_TIERS]
+        included_in_plans = [
+            tier for tier in (normalized_variant.get("includedInPlans") or []) if tier in VALID_PLAN_TIERS
+        ]
+        can_be_extra_in_plans = [
+            tier for tier in (normalized_variant.get("canBeExtraInPlans") or []) if tier in VALID_PLAN_TIERS
+        ]
         variant_code = (normalized_variant.get("variantCode") or "").strip()
         variant_name = (normalized_variant.get("name") or "").strip()
         if not variant_code or not variant_name:
@@ -102,6 +113,20 @@ def _normalize_plan_document(document: Dict[str, Any]) -> Dict[str, Any]:
 
 def _normalize_variant_document(variant: Dict[str, Any]) -> Dict[str, Any]:
     normalized = deepcopy(variant)
+    mode, minimum = normalized.get("pricingMode"), normalized.get("availableFromPlan")
+    if mode is not None or minimum is not None:
+        if mode not in ("included", "extra") or minimum not in ("plus", "pro", "custom"):
+            raise NuvlyError(
+                "Selecciona si es gratis o de pago y el plan desde el que estará disponible.",
+                422,
+                "INVALID_SIMPLE_PRICING",
+            )
+        tiers = ["plus", "pro", "custom"]
+        available = tiers[tiers.index(minimum) :]
+        normalized["includedInPlans"] = available if mode == "included" else []
+        normalized["canBeExtraInPlans"] = available if mode == "extra" else []
+        if mode == "included":
+            normalized["extraPrice"] = 0
     variant_code = (normalized.get("variantCode") or "").strip()
     if not variant_code:
         raise NuvlyError("variantCode no puede ser vacio.", 422, "INVALID_VARIANT_CODE")
@@ -174,18 +199,67 @@ def _normalize_component_document(document: Dict[str, Any]) -> Dict[str, Any]:
 def _infer_component_tier(variants: List[Dict[str, Any]]) -> VariantLevel:
     if not variants:
         return "core"
-    highest = max((variant.get("variantTier", "core") for variant in variants), key=lambda tier: TIER_PRIORITY.get(tier, 0))
+    highest = max(
+        (variant.get("variantTier", "core") for variant in variants), key=lambda tier: TIER_PRIORITY.get(tier, 0)
+    )
     return normalize_variant_level(highest)
 
 
 def is_tier_allowed_for_plan(tier: VariantLevel, plan_tier: PlanTier) -> bool:
-    if plan_tier == "custom":
+    normalized_plan_tier = normalize_plan_tier(plan_tier)
+    if normalized_plan_tier == "custom":
         return True
-    if plan_tier == "essential":
-        return tier == "core"
-    if plan_tier == "plus":
+    if normalized_plan_tier == "plus":
         return tier in {"core", "advanced"}
     return True
+
+
+def is_paid_immersive_video(component_code: str, plan_tier: PlanTier, variant: Dict[str, Any]) -> bool:
+    return (
+        variant.get("pricingMode") is None
+        and component_code == "immersiveVideo"
+        and normalize_plan_tier(plan_tier) in {"plus", "pro"}
+        and variant.get("active", True)
+        and int(variant.get("extraPrice") or 0) > 0
+    )
+
+
+def build_catalog_component_state(component: Dict[str, Any], plan_tier: PlanTier) -> Dict[str, Any]:
+    state = build_component_catalog_state(
+        component_tier=component["componentTier"],
+        plan_tier=plan_tier,
+        component_allowed=True,
+        component_active=component.get("active", True),
+    )
+    order = ["plus", "pro", "custom"]
+    if component.get("active", True) and any(
+        variant.get("active", True)
+        and variant.get("pricingMode") in ("included", "extra")
+        and variant.get("availableFromPlan") in order
+        and order.index(normalize_plan_tier(plan_tier)) >= order.index(variant["availableFromPlan"])
+        for variant in component.get("variants", [])
+    ):
+        return {
+            "rawStatus": "included",
+            "status": "included",
+            "label": "Disponible",
+            "lockLabel": "",
+            "locked": False,
+            "lockReason": "",
+        }
+    if component.get("active", True) and any(
+        is_paid_immersive_video(component["componentCode"], plan_tier, variant)
+        for variant in component.get("variants", [])
+    ):
+        return {
+            "rawStatus": "extra",
+            "status": "extra",
+            "label": "Extra",
+            "lockLabel": "",
+            "locked": False,
+            "lockReason": "",
+        }
+    return state
 
 
 def _normalize_template_category_document(document: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,7 +272,9 @@ def _normalize_template_category_document(document: Dict[str, Any]) -> Dict[str,
     if category_code not in VALID_TEMPLATE_CATEGORIES:
         raise NuvlyError("templateCategory invalido.", 422, "INVALID_TEMPLATE_CATEGORY")
     normalized["categoryCode"] = category_code
-    normalized["allowedComponentCodes"] = sorted({code.strip() for code in normalized.get("allowedComponentCodes") or [] if code and code.strip()})
+    normalized["allowedComponentCodes"] = sorted(
+        {code.strip() for code in normalized.get("allowedComponentCodes") or [] if code and code.strip()}
+    )
     return normalized
 
 
@@ -220,6 +296,27 @@ def _sync_seed_document(
 
     if existing:
         synced_document = deepcopy(document)
+        if collection_name == PLANS_COLLECTION and existing.get("pricingManaged"):
+            for key in ("basePrice", "basePriceMonthly", "basePriceYearly", "pricingManaged"):
+                if key in existing:
+                    synced_document[key] = existing[key]
+        if collection_name == COMPONENTS_COLLECTION:
+            configured = {
+                variant["variantCode"]: variant
+                for variant in existing.get("variants", [])
+                if variant.get("pricingMode") in ("included", "extra")
+            }
+            for variant in synced_document.get("variants", []):
+                previous = configured.get(variant["variantCode"])
+                if previous:
+                    for key in (
+                        "pricingMode",
+                        "availableFromPlan",
+                        "includedInPlans",
+                        "canBeExtraInPlans",
+                        "extraPrice",
+                    ):
+                        variant[key] = deepcopy(previous[key])
         synced_document["id"] = existing.get("id", document["id"])
         synced_document["createdAt"] = existing.get("createdAt", document["createdAt"])
         repository.replace_document(
@@ -247,6 +344,7 @@ def build_variant_catalog_state(
     variant: Dict[str, Any],
     plan_tier: PlanTier,
     component_status: str,
+    force_extra: bool = False,
 ) -> Dict[str, Any]:
     if component_status == "inactive":
         raw_status = "inactive"
@@ -272,6 +370,20 @@ def build_variant_catalog_state(
         lock_label = "Inactivo"
         locked = True
         lock_reason = "Esta variante está inactiva."
+    elif variant.get("pricingMode") in ("included", "extra"):
+        order = ["plus", "pro", "custom"]
+        allowed = order.index(normalize_plan_tier(plan_tier)) >= order.index(variant["availableFromPlan"])
+        raw_status = variant["pricingMode"] if allowed else "blocked_by_plan"
+        status = raw_status if allowed else "blocked"
+        lock_label = "" if allowed else "No disponible para este plan"
+        locked = not allowed
+        lock_reason = "" if allowed else "Esta variante requiere un plan superior."
+    elif force_extra:
+        raw_status = "extra"
+        status = "extra"
+        lock_label = ""
+        locked = False
+        lock_reason = ""
     elif is_tier_allowed_for_plan(variant["variantTier"], plan_tier):
         raw_status = "included"
         status = "included"
@@ -279,7 +391,11 @@ def build_variant_catalog_state(
         locked = False
         lock_reason = ""
     else:
-        plan_label = str(plan_tier).capitalize()
+        plan_label = {
+            "plus": "Básico",
+            "pro": "Avanzadas",
+            "custom": "Personalizadas",
+        }[normalize_plan_tier(plan_tier)]
         raw_status = "blocked_by_plan"
         status = "blocked"
         lock_label = "No disponible para este plan"
@@ -365,7 +481,10 @@ class PricingPlanService:
         return _normalize_plan_response_document(document)
 
     def find_by_tier(self, product_type: ProductType, tier: PlanTier) -> Dict[str, Any]:
-        document = self.repository.find_document(PLANS_COLLECTION, {"productType": product_type, "tier": tier, "active": True})
+        tier = normalize_plan_tier(tier)
+        document = self.repository.find_document(
+            PLANS_COLLECTION, {"productType": product_type, "tier": tier, "active": True}
+        )
         if not document:
             raise NuvlyError("Plan comercial no encontrado.", 404, "PRICING_PLAN_NOT_FOUND")
         return document
@@ -386,6 +505,7 @@ class PricingPlanService:
     def update(self, plan_id: str, payload) -> Dict[str, Any]:
         current = self.get(plan_id)
         document = _normalize_plan_document(payload.model_dump(mode="json"))
+        document["pricingManaged"] = True
         document.update({"id": current["id"], "createdAt": current["createdAt"], "updatedAt": utc_now_iso()})
         return self.repository.replace_document(
             PLANS_COLLECTION,
@@ -409,15 +529,28 @@ class PricingPlanService:
     def ensure_seed(self) -> PricingSeedStats:
         stats = empty_seed_stats()
         now = utc_now_iso()
+        for legacy_plan in self.repository.find_documents(PLANS_COLLECTION, {"tier": "essential"}):
+            if legacy_plan.get("active", True) is False:
+                continue
+            self.repository.update_document_fields(
+                PLANS_COLLECTION,
+                legacy_plan["id"],
+                {"active": False, "updatedAt": now},
+                "Plan comercial no encontrado.",
+                "PRICING_PLAN_NOT_FOUND",
+            )
         for seed in PLAN_SEEDS:
             document = _normalize_plan_document(deepcopy(seed))
             document["createdAt"] = now
             document["updatedAt"] = now
+            lookup_filters = [{"id": seed["id"]}, {"code": seed["code"]}]
+            if seed["tier"] != "essential":
+                lookup_filters.append({"productType": seed["productType"], "tier": seed["tier"]})
             try:
                 result = _sync_seed_document(
                     repository=self.repository,
                     collection_name=PLANS_COLLECTION,
-                    lookup_filters=[{"id": seed["id"]}, {"code": seed["code"]}, {"productType": seed["productType"], "tier": seed["tier"]}],
+                    lookup_filters=lookup_filters,
                     document=document,
                     duplicate_message="Ya existe un plan comercial con ese code.",
                     duplicate_code="DUPLICATED_PLAN_CODE",
@@ -564,13 +697,20 @@ class PricingComponentService:
             documents = [
                 document
                 for document in documents
-                if any(tier in variant.get("includedInPlans", []) or tier in variant.get("canBeExtraInPlans", []) for variant in document.get("variants", []))
+                if any(
+                    tier in variant.get("includedInPlans", []) or tier in variant.get("canBeExtraInPlans", [])
+                    for variant in document.get("variants", [])
+                )
             ]
         if variant_level:
             documents = [
                 {
                     **document,
-                    "variants": [variant for variant in document.get("variants", []) if variant.get("variantTier") == variant_level],
+                    "variants": [
+                        variant
+                        for variant in document.get("variants", [])
+                        if variant.get("variantTier") == variant_level
+                    ],
                 }
                 for document in documents
             ]
@@ -584,7 +724,9 @@ class PricingComponentService:
         return _normalize_component_response_document(document)
 
     def get_by_component_code(self, product_type: ProductType, component_code: str) -> Dict[str, Any]:
-        document = self.repository.find_document(COMPONENTS_COLLECTION, {"productType": product_type, "componentCode": component_code})
+        document = self.repository.find_document(
+            COMPONENTS_COLLECTION, {"productType": product_type, "componentCode": component_code}
+        )
         if not document:
             raise NuvlyError("Componente comercial no encontrado.", 404, "PRICING_COMPONENT_NOT_FOUND")
         return _normalize_component_response_document(document)
@@ -738,6 +880,7 @@ class CatalogService:
         template_category: TemplateCategoryCode,
         plan_tier: PlanTier,
     ) -> Dict[str, Any]:
+        plan_tier = normalize_plan_tier(plan_tier)
         category = self.category_service.get_by_code(product_type, template_category)
         components = self.component_service.list(product_type=product_type)
         category_label = category.get("name", template_category)
@@ -745,18 +888,14 @@ class CatalogService:
 
         for component in components:
             component_allowed = True
-            component_availability = build_component_catalog_state(
-                component_tier=component["componentTier"],
-                plan_tier=plan_tier,
-                component_allowed=component_allowed,
-                component_active=component.get("active", True),
-            )
+            component_availability = build_catalog_component_state(component, plan_tier)
             variants = []
             for variant in component.get("variants", []):
                 availability = build_variant_catalog_state(
                     variant=variant,
                     plan_tier=plan_tier,
                     component_status=component_availability["rawStatus"],
+                    force_extra=is_paid_immersive_video(component["componentCode"], plan_tier, variant),
                 )
                 variants.append(
                     {
@@ -811,8 +950,15 @@ class PricingSummaryService:
 
     @staticmethod
     def _build_matrix_cell(component: Dict[str, Any], variant: Dict[str, Any], tier: PlanTier) -> Dict[str, Any]:
+        if variant.get("pricingMode") in ("included", "extra"):
+            parent = build_catalog_component_state(component, tier)
+            state = build_variant_catalog_state(variant=variant, plan_tier=tier, component_status=parent["rawStatus"])
+            status = state["status"] if state["status"] in ("included", "extra") else "blocked"
+            return {"status": status, "label": state["label"], "extraPrice": state["extraPrice"]}
         if not component.get("active", True) or not variant.get("active", True):
             return {"status": "blocked", "label": "Inactivo", "extraPrice": None}
+        if is_paid_immersive_video(component["componentCode"], tier, variant):
+            return {"status": "extra", "label": "Extra", "extraPrice": int(variant["extraPrice"])}
         if not is_tier_allowed_for_plan(component["componentTier"], tier):
             return {"status": "blocked", "label": "No disponible", "extraPrice": None}
         if tier == "custom":
@@ -821,11 +967,17 @@ class PricingSummaryService:
             return {"status": "included", "label": "Incluido", "extraPrice": None}
         return {"status": "blocked", "label": "No disponible", "extraPrice": None}
 
-    def build_summary(self, product_type: ProductType, include_inactive: bool = False, variant_level: Optional[VariantLevel] = None) -> Dict[str, Any]:
-        plans = self.plan_service.list(product_type=product_type)
-        components = self.component_service.list(product_type=product_type, active=None if include_inactive else True, variant_level=variant_level)
+    def build_summary(
+        self, product_type: ProductType, include_inactive: bool = False, variant_level: Optional[VariantLevel] = None
+    ) -> Dict[str, Any]:
+        plans = self.plan_service.list(product_type=product_type, active=True)
+        components = self.component_service.list(
+            product_type=product_type, active=None if include_inactive else True, variant_level=variant_level
+        )
 
-        tier_counters: Dict[str, Dict[str, int]] = {plan["tier"]: {"included": 0, "extra": 0, "blocked": 0} for plan in plans}
+        tier_counters: Dict[str, Dict[str, int]] = {
+            plan["tier"]: {"included": 0, "extra": 0, "blocked": 0} for plan in plans
+        }
         summary_components: List[Dict[str, Any]] = []
 
         for component in components:
@@ -891,8 +1043,11 @@ class PricingCalculatorService:
         self.component_service = PricingComponentService(repository=self.repository)
 
     def calculate(self, payload) -> Dict[str, Any]:
-        plan = self.plan_service.find_by_tier(payload.productType, payload.planTier)
-        catalog = self.catalog_service.list_components_for_catalog(payload.productType, payload.templateCategory, payload.planTier)
+        plan_tier = normalize_plan_tier(payload.planTier)
+        plan = self.plan_service.find_by_tier(payload.productType, plan_tier)
+        catalog = self.catalog_service.list_components_for_catalog(
+            payload.productType, payload.templateCategory, plan_tier
+        )
         status_by_variant: Dict[tuple[str, str], Dict[str, Any]] = {}
         for component in catalog["components"]:
             for variant in component["variants"]:
@@ -913,7 +1068,9 @@ class PricingCalculatorService:
             if not variant:
                 raise NuvlyError("Variante comercial no encontrada.", 404, "PRICING_VARIANT_NOT_FOUND")
             if variant["status"] != "extra":
-                raise NuvlyError("La variante seleccionada no corresponde a un extra permitido.", 400, "VARIANT_NOT_ALLOWED_FOR_PLAN")
+                raise NuvlyError(
+                    "La variante seleccionada no corresponde a un extra permitido.", 400, "VARIANT_NOT_ALLOWED_FOR_PLAN"
+                )
             extra_price = int(variant.get("extraPrice", 0))
             component_extras_total += extra_price
             breakdown.append(
@@ -932,13 +1089,18 @@ class PricingCalculatorService:
                 raise NuvlyError("Extra general no soportado.", 400, "INVALID_GENERAL_EXTRA")
             if extra.get("productType") and extra["productType"] != payload.productType:
                 raise NuvlyError("Extra general no soportado para ese tipo de producto.", 400, "INVALID_GENERAL_EXTRA")
-            extras_total += int(extra["price"])
+            extra_amount = int(extra["price"])
+            extra_label = extra["name"]
+            if extra.get("billingPeriod") == "monthly":
+                extra_amount = int(extra["priceMonthly"]) * payload.durationMonths
+                extra_label = f"{extra['name']} · {payload.durationMonths} mes(es)"
+            extras_total += extra_amount
             breakdown.append(
                 {
                     "code": extra["code"],
-                    "label": extra["name"],
+                    "label": extra_label,
                     "type": "general_extra",
-                    "amount": int(extra["price"]),
+                    "amount": extra_amount,
                 }
             )
 

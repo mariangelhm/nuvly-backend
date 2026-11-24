@@ -52,7 +52,11 @@ def test_login_returns_auth_specific_validation_error_payload() -> None:
     exc = RequestValidationError(
         [
             {"loc": ("body", "email"), "msg": "Debe ser un email valido.", "type": "value_error"},
-            {"loc": ("body", "password"), "msg": "String should have at least 8 characters", "type": "string_too_short"},
+            {
+                "loc": ("body", "password"),
+                "msg": "String should have at least 8 characters",
+                "type": "string_too_short",
+            },
         ]
     )
 
@@ -65,7 +69,11 @@ def test_login_returns_auth_specific_validation_error_payload() -> None:
             "message": "Datos inválidos para inicio de sesión.",
             "details": [
                 {"field": "email", "message": "Debe ser un email valido.", "type": "value_error"},
-                {"field": "password", "message": "String should have at least 8 characters", "type": "string_too_short"},
+                {
+                    "field": "password",
+                    "message": "String should have at least 8 characters",
+                    "type": "string_too_short",
+                },
             ],
         }
     }

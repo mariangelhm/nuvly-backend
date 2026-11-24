@@ -1,10 +1,15 @@
 # Python 3.14.5 compatible stack
-# First run: python -m pip install --upgrade pip setuptools wheel
+# Reproducible versions validated locally; refresh the lock deliberately.
+-c requirements-lock.txt
 fastapi>=0.119.0
 pydantic>=2.12.0
 pydantic-settings>=2.11.0
 uvicorn>=0.37.0
 pymongo>=4.15.0
 python-dotenv>=1.1.0
-pytest>=8.0.0
 python-multipart>=0.0.20
+google-auth[requests]>=2.40.0
+requests>=2.34.2
+reportlab>=4.4,<6
+Pillow>=11
+tzdata>=2025.2

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import logging
+from copy import deepcopy
 from typing import Any, Dict
 
 from app.core.errors import NuvlyError
@@ -49,7 +49,11 @@ class InMemoryDomainRepository:
         sort_field: str = "updatedAt",
         sort_direction: int = -1,
     ) -> list[Dict[str, Any]]:
-        documents = [deepcopy(document) for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        documents = [
+            deepcopy(document)
+            for document in self.collections.get(collection_name, [])
+            if self._matches(document, filters)
+        ]
         documents.sort(key=lambda document: _get_nested(document, sort_field), reverse=sort_direction == -1)
         documents = documents[skip:]
         if limit > 0:
@@ -74,16 +78,21 @@ class InMemoryDomainRepository:
         not_found_code: str,
         duplicate_message: str,
         duplicate_code: str = "DUPLICATED_SLUG",
+        expected_updated_at: str | None = None,
     ) -> Dict[str, Any]:
         documents = self.collections.get(collection_name, [])
         for index, current in enumerate(documents):
             if current.get("id") == document_id:
+                if expected_updated_at is not None and current.get("updatedAt") != expected_updated_at:
+                    raise NuvlyError("Concurrent update", 409, "PROJECT_VERSION_CONFLICT")
                 documents[index] = deepcopy(document)
                 return deepcopy(document)
         raise AssertionError(f"Document not found in test repository: {collection_name}/{document_id}")
 
     def count_documents(self, collection_name: str, filters: Dict[str, Any]) -> int:
-        return len([document for document in self.collections.get(collection_name, []) if self._matches(document, filters)])
+        return len(
+            [document for document in self.collections.get(collection_name, []) if self._matches(document, filters)]
+        )
 
     @staticmethod
     def _matches(document: Dict[str, Any], filters: Dict[str, Any]) -> bool:
@@ -105,7 +114,17 @@ def _website_payload(catalog_visible: bool = False) -> Dict[str, Any]:
         "experienceType": "web",
         "styles": {"themeId": "sunrise"},
         "layout": {"sectionOrder": ["blk_hero"]},
-        "blocks": [{"id": "blk_hero", "type": "hero", "variant": "H1", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [
+            {
+                "id": "blk_hero",
+                "type": "hero",
+                "variant": "H1",
+                "enabled": True,
+                "order": 1,
+                "props": {},
+                "settings": {},
+            }
+        ],
         "seo": {"title": "SEO title", "description": "SEO description", "noIndex": False},
         "metadata": {
             "category": "landing",
@@ -131,7 +150,17 @@ def _invitation_payload(catalog_visible: bool = False) -> Dict[str, Any]:
         "slug": "public-invitation-template",
         "styles": {"themeId": "garden"},
         "layout": {"sectionOrder": ["blk_intro"]},
-        "blocks": [{"id": "blk_intro", "type": "intro", "variant": "intro-a", "enabled": True, "order": 1, "props": {}, "settings": {}}],
+        "blocks": [
+            {
+                "id": "blk_intro",
+                "type": "intro",
+                "variant": "intro-a",
+                "enabled": True,
+                "order": 1,
+                "props": {},
+                "settings": {},
+            }
+        ],
         "seo": {"title": "Invitation SEO", "description": "Invitation desc", "noIndex": False},
         "metadata": {
             "category": "wedding",
